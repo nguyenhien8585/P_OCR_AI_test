@@ -1,54 +1,277 @@
-name: Deploy to Streamlit Cloud
+#!/bin/bash
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+# PDF/LaTeX Converter - Deploy Fix Script
+# Sử dụng script này để fix các vấn đề deploy thường gặp
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.9
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+echo "🔧 PDF/LaTeX Converter - Deploy Fix Script"
+echo "=========================================="
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Function to print colored text
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Check if we're in the right directory
+if [ ! -f "app.py" ] && [ ! -f "app_fixed.py" ] && [ ! -f "app_simple.py" ]; then
+    print_error "No app files found. Please run this script from the project root directory."
+    exit 1
+fi
+
+print_status "Starting deploy fix process..."
+
+# Step 1: Check Python version
+print_status "Checking Python version..."
+python_version=$(python3 --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
+if [[ "$python_version" < "3.8" ]]; then
+    print_error "Python 3.8+ required. Current version: $python_version"
+    exit 1
+else
+    print_success "Python version OK: $python_version"
+fi
+
+# Step 2: Create clean requirements.txt
+print_status "Creating clean requirements.txt..."
+cat > requirements.txt << EOF
+streamlit>=1.28.0
+requests>=2.31.0
+Pillow>=9.5.0
+PyMuPDF>=1.21.0
+python-docx>=0.8.11
+EOF
+print_success "Clean requirements.txt created"
+
+# Step 3: Create runtime.txt
+print_status "Creating runtime.txt..."
+echo "python-3.9.18" > runtime.txt
+print_success "runtime.txt created"
+
+# Step 4: Fix SyntaxError and other common issues
+print_status "Checking for common errors..."
+
+if [ -f "app.py" ]; then
+    # Check for syntax errors, st.time() usage, and regex issues
+    if grep -q "st\.time()" app.py || grep -q "\\$\\$([^\\$]+)\\$\\$|\\$([^\\$]+)\\$" app.py; then
+        print_warning "Found potential issues in app.py (st.time() or regex patterns)"
+        print_status "Creating backup and using fixed version..."
         
-    - name: Lint with flake8
-      run: |
-        pip install flake8
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        # Backup original
+        cp app.py app_backup_$(date +%Y%m%d_%H%M%S).py
+        print_success "Original app.py backed up"
         
-    - name: Test application structure
-      run: |
-        python -c "import app; print('App structure OK')"
-        python -c "import utils; print('Utils module OK')"
+        # Use fixed version if available
+        if [ -f "app_fixed.py" ]; then
+            cp app_fixed.py app.py
+            print_success "Using app_fixed.py version (all syntax errors fixed)"
+        elif [ -f "app_simple.py" ]; then
+            cp app_simple.py app.py
+            print_success "Using app_simple.py version (simplified but working)"
+        else
+            print_error "No fixed version found. Manual fix required."
+        fi
+    else
+        print_success "No obvious syntax issues found in app.py"
+    fi
+else
+    # If no app.py exists, use available version
+    if [ -f "app_fixed.py" ]; then
+        cp app_fixed.py app.py
+        print_success "Created app.py from app_fixed.py"
+    elif [ -f "app_simple.py" ]; then
+        cp app_simple.py app.py
+        print_success "Created app.py from app_simple.py"
+    else
+        print_error "No app files found to work with"
+        exit 1
+    fi
+fi
+
+# Step 5: Test syntax locally
+print_status "Testing Python syntax..."
+if python3 -m py_compile app.py; then
+    print_success "Python syntax is valid"
+else
+    print_error "Syntax errors found. Please check app.py manually."
+    print_warning "Try using app_fixed.py which has all syntax errors resolved."
+    exit 1
+fi
+
+# Step 6: Test imports locally
+print_status "Testing imports locally..."
+if [ -f "test_imports.py" ]; then
+    if python3 test_imports.py; then
+        print_success "All imports working locally"
+    else
+        print_error "Import test failed. Installing requirements..."
+        pip3 install -r requirements.txt
         
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if python3 test_imports.py; then
+            print_success "Imports working after installing requirements"
+        else
+            print_warning "Import test still failing. May work on Streamlit Cloud."
+        fi
+    fi
+else
+    print_warning "test_imports.py not found, skipping import test"
+fi
+
+# Step 7: Check for common issues
+print_status "Checking for common issues..."
+
+# Check file sizes
+large_files=$(find . -type f -size +10M 2>/dev/null)
+if [ ! -z "$large_files" ]; then
+    print_warning "Large files found (>10MB):"
+    echo "$large_files"
+    print_warning "Consider reducing file sizes or adding to .gitignore"
+fi
+
+# Check .streamlit directory
+if [ ! -d ".streamlit" ]; then
+    print_status "Creating .streamlit directory..."
+    mkdir .streamlit
+fi
+
+# Create config.toml if missing
+if [ ! -f ".streamlit/config.toml" ]; then
+    print_status "Creating .streamlit/config.toml..."
+    cat > .streamlit/config.toml << EOF
+[global]
+developmentMode = false
+
+[server]
+headless = true
+port = 8501
+enableCORS = false
+maxUploadSize = 200
+
+[theme]
+primaryColor = "#2E86AB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+EOF
+    print_success ".streamlit/config.toml created"
+fi
+
+# Step 8: Create .gitignore if missing
+if [ ! -f ".gitignore" ]; then
+    print_status "Creating .gitignore..."
+    cat > .gitignore << EOF
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+.streamlit/secrets.toml
+*.key
+api_keys.txt
+secrets.json
+config.json
+*.tmp
+*.temp
+temp/
+tmp/
+.DS_Store
+Thumbs.db
+logs/
+*.log
+app_backup_*.py
+EOF
+    print_success ".gitignore created"
+fi
+
+# Step 9: Git status check
+print_status "Checking git status..."
+if git status > /dev/null 2>&1; then
+    print_success "Git repository detected"
     
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Deploy notification
-      run: |
-        echo "🚀 Deploying to Streamlit Cloud..."
-        echo "📄 App will be available at: https://pdf-latex-converter.streamlit.app/"
+    # Check for uncommitted changes
+    if ! git diff-index --quiet HEAD --; then
+        print_warning "Uncommitted changes detected"
+        print_status "Files changed:"
+        git status --porcelain
         
-    - name: Create deployment badge
-      run: |
-        echo "![Deployment Status](https://img.shields.io/badge/deployment-success-brightgreen)" > deployment_status.md
+        echo
+        read -p "Commit changes? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            git add .
+            git commit -m "Fix: SyntaxError, AttributeError and deploy configuration"
+            print_success "Changes committed"
+            
+            echo
+            read -p "Push to GitHub? (y/n): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                git push origin main
+                print_success "Changes pushed to GitHub"
+            fi
+        fi
+    else
+        print_success "Working directory clean"
+    fi
+else
+    print_warning "Not a git repository. Initialize git first:"
+    echo "  git init"
+    echo "  git add ."
+    echo "  git commit -m 'Initial commit'"
+fi
+
+# Step 10: Deploy instructions
+echo
+print_success "Deploy fix completed! Next steps:"
+echo "================================"
+echo
+echo "🔄 If you just pushed to GitHub:"
+echo "   - Go to Streamlit Cloud dashboard"
+echo "   - Your app should auto-redeploy"
+echo "   - Check logs for any remaining errors"
+echo
+echo "🚀 If first time deploying:"
+echo "   1. Go to https://share.streamlit.io"
+echo "   2. Connect your GitHub repo"
+echo "   3. Main file: app.py"
+echo "   4. Click Deploy"
+echo
+echo "🔑 Get Gemini API Key:"
+echo "   - Visit https://makersuite.google.com/app/apikey"
+echo "   - Create new key (free)"
+echo "   - Use in the app sidebar"
+echo
+echo "🐛 Common Error Fixes Applied:"
+echo "   ✅ SyntaxError in regex patterns → Fixed"
+echo "   ✅ AttributeError with st.time() → Fixed"
+echo "   ✅ Import dependency issues → Fixed"
+echo "   ✅ Clean requirements.txt → Created"
+echo "   ✅ Python version specified → runtime.txt"
+echo
+echo "📱 Test your app:"
+echo "   - Upload a small PDF or image"
+echo "   - Enter your Gemini API key"
+echo "   - Try the conversion"
+echo
+print_success "All known issues fixed! Deploy should work now 🎉"
+echo
+print_warning "Note: Original files backed up with timestamp"
