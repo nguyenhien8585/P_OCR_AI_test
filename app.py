@@ -774,7 +774,7 @@ class WordExporter:
                 continue
             
             # Xử lý công thức LaTeX với định dạng ${......}$
-            if '${' in line and '}
+            if '${' in line and '}$'
         
         # Thêm ảnh gốc nếu có (fallback)
         if images and not extracted_figures:
