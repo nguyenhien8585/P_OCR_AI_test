@@ -362,56 +362,189 @@ class SmartImageExtractor:
         return crop
     
     def insert_figures_into_text_by_position(self, text, figures, img_h, img_w):
-        """Chèn ảnh vào văn bản dựa trên vị trí thực tế"""
+        """Chèn ảnh vào văn bản dựa trên vị trí thực tế + ngữ cảnh thông minh"""
         if not figures:
             return text
         
         lines = text.split('\n')
         
-        # Ước tính vị trí các dòng text trong ảnh
-        line_positions = []
-        estimated_line_height = img_h / max(len([line for line in lines if line.strip()]), 1)
-        
-        current_y = 0
-        for i, line in enumerate(lines):
-            if line.strip():  # Chỉ tính các dòng có nội dung
-                line_positions.append({
-                    'index': i,
-                    'y_position': current_y,
-                    'content': line.strip()
-                })
-                current_y += estimated_line_height
+        # Phân tích cấu trúc văn bản
+        structure_info = self._analyze_text_structure(lines, img_h, img_w)
         
         # Sắp xếp figures theo vị trí Y
         sorted_figures = sorted(figures, key=lambda f: f['y_position'])
         
-        # Chèn ảnh vào vị trí phù hợp
+        # Chèn ảnh với logic thông minh
         result_lines = lines[:]
         inserted_count = 0
+        used_figures = set()
         
         for fig in sorted_figures:
-            fig_y = fig['y_position']
+            if fig['name'] in used_figures:
+                continue
+                
+            # Tìm vị trí chèn tối ưu
+            insertion_info = self._find_optimal_insertion_position(
+                fig, structure_info, img_h, img_w
+            )
             
-            # Tìm dòng phù hợp để chèn ảnh
-            best_line_index = 0
-            min_distance = float('inf')
-            
-            for line_info in line_positions:
-                distance = abs(line_info['y_position'] - fig_y)
-                if distance < min_distance:
-                    min_distance = distance
-                    best_line_index = line_info['index']
-            
-            # Chèn ảnh sau dòng được chọn
-            insertion_index = best_line_index + 1 + inserted_count
-            
-            # Đảm bảo không vượt quá độ dài danh sách
-            if insertion_index <= len(result_lines):
-                tag = f"\n[BẢNG: {fig['name']}]\n" if fig['is_table'] else f"\n[HÌNH: {fig['name']}]\n"
-                result_lines.insert(insertion_index, tag)
-                inserted_count += 1
+            if insertion_info:
+                insertion_index = insertion_info['index'] + inserted_count
+                
+                # Đảm bảo không vượt quá độ dài danh sách
+                if insertion_index <= len(result_lines):
+                    tag = f"\n[BẢNG: {fig['name']}]\n" if fig['is_table'] else f"\n[HÌNH: {fig['name']}]\n"
+                    result_lines.insert(insertion_index, tag)
+                    inserted_count += 1
+                    used_figures.add(fig['name'])
         
         return '\n'.join(result_lines)
+    
+    def _analyze_text_structure(self, lines, img_h, img_w):
+        """Phân tích cấu trúc văn bản để hiểu ngữ cảnh"""
+        structure = []
+        estimated_line_height = img_h / max(len([line for line in lines if line.strip()]), 1)
+        
+        current_y = 0
+        current_question = None
+        
+        for i, line in enumerate(lines):
+            line_content = line.strip()
+            if not line_content:
+                current_y += estimated_line_height * 0.5  # Dòng trống
+                continue
+            
+            # Phân loại dòng
+            line_type = self._classify_line(line_content)
+            
+            # Cập nhật câu hỏi hiện tại
+            if line_type == 'question_start':
+                current_question = self._extract_question_number(line_content)
+            
+            structure.append({
+                'index': i,
+                'content': line_content,
+                'y_position': current_y,
+                'type': line_type,
+                'question_number': current_question,
+                'is_answer_area': line_type in ['question_description', 'before_answers'],
+                'is_after_question': line_type in ['before_answers', 'answer_option']
+            })
+            
+            current_y += estimated_line_height
+        
+        return structure
+    
+    def _classify_line(self, line_content):
+        """Phân loại loại dòng"""
+        line_lower = line_content.lower()
+        
+        # Câu hỏi
+        if re.match(r'^câu\s+\d+', line_lower):
+            return 'question_start'
+        
+        # Mô tả câu hỏi hoặc đề bài
+        if any(keyword in line_lower for keyword in [
+            'xét tính đúng sai', 'cho hình', 'trong hình', 'có tất cả', 
+            'khẳng định sau', 'các khẳng định', 'đáy là', 'tâm'
+        ]):
+            return 'question_description'
+        
+        # Vùng trước đáp án (thường là nơi chèn bảng/hình)
+        if (line_content.endswith(':') or line_content.endswith('sau:') or
+            'khẳng định sau' in line_lower):
+            return 'before_answers'
+        
+        # Đáp án
+        if re.match(r'^[a-d]\)', line_content) or re.match(r'^[A-D]\)', line_content):
+            return 'answer_option'
+        
+        # Dòng thường
+        return 'normal'
+    
+    def _extract_question_number(self, line_content):
+        """Trích xuất số câu hỏi"""
+        match = re.search(r'câu\s+(\d+)', line_content.lower())
+        return int(match.group(1)) if match else None
+    
+    def _find_optimal_insertion_position(self, figure, structure_info, img_h, img_w):
+        """Tìm vị trí chèn tối ưu dựa trên vị trí Y và ngữ cảnh"""
+        fig_y = figure['y_position']
+        fig_center_y = figure.get('center_y', fig_y)
+        
+        # Tìm các vị trí ứng viên
+        candidates = []
+        
+        for i, struct in enumerate(structure_info):
+            # Tính điểm dựa trên khoảng cách Y
+            y_distance = abs(struct['y_position'] - fig_center_y)
+            y_score = max(0, 100 - (y_distance / img_h) * 100)
+            
+            # Tính điểm dựa trên ngữ cảnh
+            context_score = self._calculate_context_score(struct, figure)
+            
+            # Tính điểm tổng
+            total_score = y_score * 0.6 + context_score * 0.4
+            
+            candidates.append({
+                'index': i + 1,  # Chèn sau dòng này
+                'struct': struct,
+                'y_score': y_score,
+                'context_score': context_score,
+                'total_score': total_score,
+                'y_distance': y_distance
+            })
+        
+        # Lọc và sắp xếp ứng viên
+        valid_candidates = [c for c in candidates if c['total_score'] > 30]
+        valid_candidates.sort(key=lambda x: x['total_score'], reverse=True)
+        
+        # Ưu tiên các vị trí đặc biệt
+        special_candidates = [c for c in valid_candidates if c['context_score'] >= 70]
+        if special_candidates:
+            return special_candidates[0]
+        
+        # Nếu không có vị trí đặc biệt, chọn vị trí có điểm cao nhất
+        if valid_candidates:
+            return valid_candidates[0]
+        
+        return None
+    
+    def _calculate_context_score(self, struct, figure):
+        """Tính điểm ngữ cảnh cho vị trí chèn"""
+        score = 0
+        line_type = struct['type']
+        content = struct['content'].lower()
+        
+        # Điểm cao cho vị trí lý tưởng
+        if line_type == 'before_answers':
+            score += 80  # Vị trí tốt nhất: sau mô tả, trước đáp án
+        elif line_type == 'question_description':
+            score += 60  # Vị trí tốt: trong mô tả câu hỏi
+        elif line_type == 'question_start':
+            score += 40  # Vị trí khả dụng: sau tiêu đề câu hỏi
+        
+        # Điểm thưởng cho từ khóa liên quan
+        if figure['is_table']:
+            if any(keyword in content for keyword in [
+                'bảng', 'table', 'khẳng định', 'xét tính', 'đúng sai'
+            ]):
+                score += 20
+        else:
+            if any(keyword in content for keyword in [
+                'hình', 'figure', 'cho hình', 'trong hình'
+            ]):
+                score += 20
+        
+        # Điểm trừ cho vị trí không phù hợp
+        if line_type == 'answer_option':
+            score -= 30  # Không chèn vào giữa các đáp án
+        
+        # Điểm thưởng cho dòng kết thúc bằng dấu ':'
+        if struct['content'].endswith(':') or struct['content'].endswith('sau:'):
+            score += 25
+        
+        return max(0, min(100, score))
     
     def create_debug_image(self, image_bytes, figures):
         """Tạo ảnh debug"""
@@ -429,10 +562,10 @@ class SmartImageExtractor:
             thickness = 4 if fig['confidence'] > 80 else 3 if fig['confidence'] > 60 else 2
             draw.rectangle([x, y, x+w, y+h], outline=color, width=thickness)
             
-            # Vẽ label
+            # Vẽ label với thông tin chi tiết
             conf_class = "HIGH" if fig['confidence'] > 80 else "MED" if fig['confidence'] > 60 else "LOW"
             type_label = "TBL" if fig['is_table'] else "IMG"
-            label = f"{fig['name']}\n{type_label}-{conf_class}: {fig['confidence']:.0f}%\nY: {fig['y_position']}\nAR: {fig['aspect_ratio']:.2f}"
+            label = f"{fig['name']}\n{type_label}-{conf_class}: {fig['confidence']:.0f}%\nY: {fig.get('y_position', fig['center_y'])}\nCY: {fig.get('center_y', 'N/A')}\nAR: {fig['aspect_ratio']:.2f}"
             
             # Vẽ background cho text
             lines = label.split('\n')
@@ -1167,7 +1300,8 @@ Câu X: [nội dung câu hỏi đầy đủ]
                                                 st.write(f"**{fig['name']}**")
                                                 st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '🖼️ Hình'}")
                                                 st.write(f"🎯 Confidence: {fig['confidence']:.1f}%")
-                                                st.write(f"📍 Vị trí Y: {fig['y_position']}px")
+                                                st.write(f"📍 Vị trí Y: {fig.get('y_position', fig.get('center_y', 'N/A'))}px")
+                                                st.write(f"🔘 Center Y: {fig.get('center_y', 'N/A')}px")
                                                 st.write(f"📐 Tỷ lệ: {fig['aspect_ratio']:.2f}")
                                                 st.write(f"📏 Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px")
                         
@@ -1357,7 +1491,8 @@ d) [nội dung đáp án d đầy đủ]
                                             st.write(f"**{fig['name']}**")
                                             st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '🖼️ Hình'}")
                                             st.write(f"🎯 Confidence: {fig['confidence']:.1f}%")
-                                            st.write(f"📍 Vị trí Y: {fig['y_position']}px")
+                                            st.write(f"📍 Vị trí Y: {fig.get('y_position', fig.get('center_y', 'N/A'))}px")
+                                            st.write(f"🔘 Center Y: {fig.get('center_y', 'N/A')}px")
                                             st.write(f"📐 Tỷ lệ: {fig['aspect_ratio']:.2f}")
                     
                     # Lưu session
