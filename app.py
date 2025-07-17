@@ -557,8 +557,8 @@ class EnhancedImageExtractor:
             priority += 150  # Tăng priority cho câu hỏi
         
         # High priority: kết thúc với pattern đặc biệt
-        if re.search(r'(sau|dưới đây|bên dưới|như hình|theo hình):?\s*
-    
+        if re.search(r'(sau|dưới đây|bên dưới|như hình|theo hình):?\s*', line_lower):
+            priority += 120
     def _map_figures_to_positions(self, figures, text_structure, img_h):
         """
         Ánh xạ figures với positions trong text - CẢI TIẾN cho toán học
