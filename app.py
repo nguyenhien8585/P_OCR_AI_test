@@ -15,7 +15,7 @@ import numpy as np
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/Image to LaTeX Converter - Enhanced",
+    page_title="PDF/Image to LaTeX Converter - Ultra Enhanced",
     page_icon="📝",
     layout="wide"
 )
@@ -49,6 +49,7 @@ st.markdown("""
         border-radius: 8px;
         margin: 10px 0;
         padding: 5px;
+        background: #f8f9fa;
     }
     .image-info {
         background-color: #e8f4f8;
@@ -57,68 +58,85 @@ st.markdown("""
         margin: 5px 0;
         font-size: 0.9em;
     }
+    .confidence-high { color: #28a745; font-weight: bold; }
+    .confidence-medium { color: #ffc107; font-weight: bold; }
+    .confidence-low { color: #dc3545; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-class AdvancedImageExtractor:
+class UltraImageExtractor:
     """
-    Class cải tiến để tách ảnh/bảng từ ảnh gốc với độ chính xác cao
+    Class siêu nâng cao để tách ảnh/bảng với độ chính xác cực cao
     """
     
     def __init__(self):
-        self.min_area_ratio = 0.005    # Diện tích tối thiểu (% của ảnh gốc)
-        self.min_area_abs = 1500       # Diện tích tối thiểu (pixel)
-        self.min_width = 50            # Chiều rộng tối thiểu
-        self.min_height = 50           # Chiều cao tối thiểu
-        self.max_figures = 10          # Số lượng ảnh tối đa
-        self.padding = 5               # Padding xung quanh ảnh cắt
+        self.min_area_ratio = 0.003    # Diện tích tối thiểu (% của ảnh gốc)
+        self.min_area_abs = 1000       # Diện tích tối thiểu (pixel)
+        self.min_width = 40            # Chiều rộng tối thiểu
+        self.min_height = 40           # Chiều cao tối thiểu
+        self.max_figures = 12          # Số lượng ảnh tối đa
+        self.padding = 8               # Padding xung quanh ảnh cắt
+        self.confidence_threshold = 50 # Ngưỡng confidence tối thiểu
     
     def extract_figures_and_tables(self, image_bytes):
-        """Tách ảnh và bảng từ ảnh gốc với thuật toán cải tiến"""
-        # 1. Đọc ảnh
+        """Tách ảnh và bảng với thuật toán siêu chính xác"""
+        # 1. Đọc và tiền xử lý ảnh
         img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img = np.array(img_pil)
         h, w = img.shape[:2]
         
-        # 2. Tiền xử lý ảnh nhiều bước
+        # 2. Tiền xử lý ảnh đa cấp độ
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         
-        # Khử nhiễu
-        gray = cv2.medianBlur(gray, 3)
-        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        # Khử nhiễu mạnh
+        gray = cv2.medianBlur(gray, 5)
+        gray = cv2.bilateralFilter(gray, 9, 75, 75)
         
         # Tăng cường độ tương phản adaptive
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
         
-        # 3. Phát hiện cạnh với nhiều phương pháp
-        # Phương pháp 1: Adaptive threshold
-        thresh1 = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY_INV, 11, 2
-        )
+        # 3. Phát hiện cạnh đa phương pháp
+        # Phương pháp 1: Adaptive threshold với nhiều kích thước kernel
+        thresh1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        thresh2 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 3)
         
-        # Phương pháp 2: Canny edge detection
-        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        # Phương pháp 2: Canny với multiple scales
+        edges1 = cv2.Canny(gray, 30, 100, apertureSize=3)
+        edges2 = cv2.Canny(gray, 50, 150, apertureSize=3)
+        edges3 = cv2.Canny(gray, 80, 200, apertureSize=5)
         
-        # Phương pháp 3: Morphological operations
-        kernel_rect = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        thresh2 = cv2.morphologyEx(thresh1, cv2.MORPH_CLOSE, kernel_rect)
+        # Phương pháp 3: Gradient-based detection
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient = np.sqrt(sobelx**2 + sobely**2)
+        gradient = np.uint8(gradient / gradient.max() * 255)
+        _, gradient_thresh = cv2.threshold(gradient, 50, 255, cv2.THRESH_BINARY)
         
-        # Kết hợp các phương pháp
-        combined = cv2.bitwise_or(thresh2, edges)
+        # 4. Kết hợp tất cả phương pháp
+        combined = cv2.bitwise_or(thresh1, thresh2)
+        combined = cv2.bitwise_or(combined, edges1)
+        combined = cv2.bitwise_or(combined, edges2) 
+        combined = cv2.bitwise_or(combined, edges3)
+        combined = cv2.bitwise_or(combined, gradient_thresh)
         
-        # 4. Làm dày các đường viền
-        kernel = np.ones((2, 2), np.uint8)
-        combined = cv2.dilate(combined, kernel, iterations=1)
+        # 5. Morphological operations để làm sạch
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
         
-        # 5. Tìm các contour với hierarchy
-        contours, hierarchy = cv2.findContours(
-            combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
+        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel_close)
+        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel_open)
         
-        # 6. Lọc và phân loại các vùng với nhiều tiêu chí
+        # Dilate nhẹ để kết nối các thành phần
+        kernel_dilate = np.ones((2, 2), np.uint8)
+        combined = cv2.dilate(combined, kernel_dilate, iterations=1)
+        
+        # 6. Tìm contours với hierarchy
+        contours, hierarchy = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # 7. Lọc và phân tích contours với nhiều tiêu chí
         candidates = []
+        
         for i, cnt in enumerate(contours):
             # Tính toán bounding box
             x, y, ww, hh = cv2.boundingRect(cnt)
@@ -126,49 +144,68 @@ class AdvancedImageExtractor:
             area_ratio = area / (w * h)
             aspect_ratio = ww / (hh + 1e-6)
             
-            # Lọc theo kích thước cơ bản
+            # Lọc kích thước cơ bản
             if (area < self.min_area_abs or 
                 area_ratio < self.min_area_ratio or 
-                area_ratio > 0.7):
+                area_ratio > 0.8):
                 continue
             
             if ww < self.min_width or hh < self.min_height:
                 continue
             
             # Lọc aspect ratio hợp lý
-            if not (0.1 < aspect_ratio < 15.0):
+            if not (0.05 < aspect_ratio < 20.0):
                 continue
             
             # Loại bỏ vùng ở rìa ảnh
-            margin = 0.02
+            margin = 0.01
             if (x < margin*w or y < margin*h or 
                 (x+ww) > (1-margin)*w or (y+hh) > (1-margin)*h):
                 continue
             
-            # Tính các đặc trưng hình học
+            # Tính các đặc trưng hình học nâng cao
             hull = cv2.convexHull(cnt)
             hull_area = cv2.contourArea(hull)
             contour_area = cv2.contourArea(cnt)
             
-            if hull_area == 0:
+            if hull_area == 0 or contour_area < 100:
                 continue
-                
+            
+            # Tính toán các metrics chất lượng
             solidity = float(contour_area) / hull_area
-            if solidity < 0.3:  # Loại bỏ shape quá phức tạp
-                continue
-            
-            # Tính extent (tỷ lệ fill bounding box)
             extent = float(contour_area) / area
-            if extent < 0.2:  # Loại bỏ shape quá thưa
+            
+            # Tính chu vi và circularity
+            perimeter = cv2.arcLength(cnt, True)
+            if perimeter == 0:
+                continue
+            circularity = 4 * np.pi * contour_area / (perimeter ** 2)
+            
+            # Lọc các shape quá phức tạp hoặc quá đơn giản
+            if solidity < 0.2 or extent < 0.15:
                 continue
             
-            # Phân loại bảng vs hình dựa trên nhiều tiêu chí
-            is_table = self._classify_as_table(x, y, ww, hh, w, h, cnt, gray)
+            # Tính moments để kiểm tra shape regularity
+            moments = cv2.moments(cnt)
+            if moments['m00'] == 0:
+                continue
             
-            # Tính toán điểm confidence
-            confidence = self._calculate_confidence(
-                area_ratio, aspect_ratio, solidity, extent, ww, hh, w, h
+            # Phân tích nội dung vùng để phân loại
+            roi = gray[y:y+hh, x:x+ww]
+            content_analysis = self._analyze_region_content(roi)
+            
+            # Phân loại bảng vs hình
+            is_table = self._advanced_table_classification(x, y, ww, hh, w, h, cnt, roi, content_analysis)
+            
+            # Tính điểm confidence nâng cao
+            confidence = self._calculate_advanced_confidence(
+                area_ratio, aspect_ratio, solidity, extent, circularity,
+                ww, hh, w, h, content_analysis, contour_area
             )
+            
+            # Chỉ giữ lại những vùng có confidence cao
+            if confidence < self.confidence_threshold:
+                continue
             
             candidates.append({
                 "area": area,
@@ -179,25 +216,27 @@ class AdvancedImageExtractor:
                 "aspect_ratio": aspect_ratio,
                 "solidity": solidity,
                 "extent": extent,
+                "circularity": circularity,
+                "content_analysis": content_analysis,
                 "bbox": (x, y, ww, hh),
                 "contour": cnt
             })
         
-        # 7. Sắp xếp theo confidence và area
+        # 8. Sắp xếp và lọc overlapping với thuật toán NMS
         candidates = sorted(candidates, key=lambda f: f['confidence'], reverse=True)
-        candidates = self._filter_overlapping_boxes(candidates)
+        candidates = self._non_maximum_suppression(candidates, iou_threshold=0.3)
         candidates = candidates[:self.max_figures]
         
-        # 8. Sắp xếp lại theo vị trí (top-to-bottom, left-to-right)
-        candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
+        # 9. Sắp xếp theo vị trí đọc (top-to-bottom, left-to-right)
+        candidates = sorted(candidates, key=lambda box: (box["y0"] + box["height"]//2, box["x0"]))
         
-        # 9. Tạo danh sách ảnh kết quả với padding
+        # 10. Tạo ảnh kết quả với quality cao
         final_figures = []
         img_idx = 0
         table_idx = 0
         
         for fig_data in candidates:
-            # Cắt ảnh với padding
+            # Cắt ảnh với padding thông minh
             x0 = max(0, fig_data["x0"] - self.padding)
             y0 = max(0, fig_data["y0"] - self.padding)
             x1 = min(w, fig_data["x1"] + self.padding)
@@ -208,12 +247,15 @@ class AdvancedImageExtractor:
             if crop.size == 0:
                 continue
             
-            # Chuyển thành base64
+            # Post-process ảnh cắt
+            crop = self._enhance_cropped_image(crop)
+            
+            # Chuyển thành base64 với quality cao
             buf = io.BytesIO()
-            Image.fromarray(crop).save(buf, format="JPEG", quality=95)
+            Image.fromarray(crop).save(buf, format="JPEG", quality=98, optimize=True)
             b64 = base64.b64encode(buf.getvalue()).decode()
             
-            # Đặt tên file
+            # Đặt tên file thông minh
             if fig_data["is_table"]:
                 name = f"table-{table_idx+1}.jpeg"
                 table_idx += 1
@@ -229,142 +271,253 @@ class AdvancedImageExtractor:
                 "original_bbox": fig_data["bbox"],
                 "confidence": fig_data["confidence"],
                 "aspect_ratio": fig_data["aspect_ratio"],
-                "area": fig_data["area"]
+                "area": fig_data["area"],
+                "solidity": fig_data["solidity"],
+                "content_analysis": fig_data["content_analysis"]
             })
         
         return final_figures, h, w
     
-    def _classify_as_table(self, x, y, w, h, img_w, img_h, contour, gray_img):
-        """Phân loại xem vùng này là bảng hay hình ảnh"""
+    def _analyze_region_content(self, roi):
+        """Phân tích nội dung vùng để hỗ trợ phân loại"""
+        if roi.shape[0] < 10 or roi.shape[1] < 10:
+            return {"has_text": False, "has_lines": 0, "density": 0, "uniformity": 0}
+        
+        # Phát hiện text regions (vùng có nhiều pixel đen nhỏ)
+        kernel_text = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 1))
+        _, binary = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        text_regions = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_text)
+        has_text = np.sum(text_regions) > roi.shape[0] * roi.shape[1] * 0.05
+        
+        # Phát hiện đường kẻ ngang và dọc
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (min(roi.shape[1]//3, 40), 1))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, min(roi.shape[0]//3, 40)))
+        
+        horizontal_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel)
+        vertical_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
+        
+        h_lines = len(cv2.findContours(horizontal_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0])
+        v_lines = len(cv2.findContours(vertical_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0])
+        
+        # Tính mật độ pixel
+        density = np.sum(binary) / (roi.shape[0] * roi.shape[1] * 255)
+        
+        # Tính độ đồng đều (uniformity)
+        hist = cv2.calcHist([roi], [0], None, [256], [0, 256])
+        uniformity = np.sum((hist / hist.sum()) ** 2)
+        
+        return {
+            "has_text": has_text,
+            "has_lines": h_lines + v_lines,
+            "h_lines": h_lines,
+            "v_lines": v_lines,
+            "density": density,
+            "uniformity": uniformity
+        }
+    
+    def _advanced_table_classification(self, x, y, w, h, img_w, img_h, contour, roi, content_analysis):
+        """Phân loại bảng vs hình ảnh với thuật toán nâng cao"""
         aspect_ratio = w / (h + 1e-6)
         
-        # Kiểm tra tỷ lệ và kích thước cho bảng
+        # Điểm từ kích thước và tỷ lệ
         size_score = 0
-        if w > 0.3 * img_w:  # Bảng thường rộng
+        if w > 0.25 * img_w:  # Bảng thường rộng
+            size_score += 3
+        if h > 0.08 * img_h and h < 0.7 * img_h:  # Chiều cao vừa phải
             size_score += 2
-        if h > 0.1 * img_h and h < 0.6 * img_h:  # Chiều cao vừa phải
-            size_score += 1
+        if 1.5 < aspect_ratio < 10.0:  # Tỷ lệ phù hợp cho bảng
+            size_score += 3
         
-        # Kiểm tra aspect ratio
-        ratio_score = 0
-        if 2.0 < aspect_ratio < 8.0:  # Bảng thường dài hơn cao
-            ratio_score += 2
-        elif 1.2 < aspect_ratio < 12.0:
-            ratio_score += 1
+        # Điểm từ phân tích nội dung
+        content_score = 0
+        if content_analysis["has_lines"] > 2:  # Có đường kẻ
+            content_score += 4
+        if content_analysis["h_lines"] > 1:  # Có đường kẻ ngang
+            content_score += 3
+        if content_analysis["v_lines"] > 0:  # Có đường kẻ dọc
+            content_score += 2
+        if content_analysis["has_text"]:  # Có text
+            content_score += 2
+        if 0.1 < content_analysis["density"] < 0.4:  # Mật độ vừa phải
+            content_score += 2
         
-        # Kiểm tra đường kẻ ngang trong vùng
-        roi = gray_img[y:y+h, x:x+w]
-        horizontal_lines = self._detect_horizontal_lines(roi)
-        line_score = min(horizontal_lines * 0.5, 2)
+        # Điểm từ vị trí (bảng thường ở giữa)
+        position_score = 0
+        center_x_ratio = (x + w/2) / img_w
+        if 0.1 < center_x_ratio < 0.9:
+            position_score += 1
         
-        total_score = size_score + ratio_score + line_score
-        return total_score >= 3
+        total_score = size_score + content_score + position_score
+        
+        # Ngưỡng phân loại động dựa trên confidence
+        threshold = 6 if content_analysis["has_lines"] > 3 else 8
+        
+        return total_score >= threshold
     
-    def _detect_horizontal_lines(self, roi):
-        """Phát hiện đường kẻ ngang trong vùng (dấu hiệu của bảng)"""
-        if roi.shape[0] < 10 or roi.shape[1] < 10:
-            return 0
-        
-        # Tạo kernel dài ngang để detect đường kẻ ngang
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (roi.shape[1]//3, 1))
-        thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-        horizontal_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-        
-        # Đếm số đường kẻ
-        lines = cv2.HoughLinesP(horizontal_lines, 1, np.pi/180, 
-                               threshold=roi.shape[1]//4, minLineLength=roi.shape[1]//3)
-        
-        return len(lines) if lines is not None else 0
-    
-    def _calculate_confidence(self, area_ratio, aspect_ratio, solidity, extent, w, h, img_w, img_h):
-        """Tính điểm confidence cho việc cắt ảnh"""
+    def _calculate_advanced_confidence(self, area_ratio, aspect_ratio, solidity, extent, 
+                                     circularity, w, h, img_w, img_h, content_analysis, contour_area):
+        """Tính confidence score nâng cao"""
         confidence = 0
         
-        # Điểm dựa trên kích thước
-        if 0.01 < area_ratio < 0.5:
-            confidence += 30
-        elif 0.005 < area_ratio < 0.01:
-            confidence += 20
+        # Điểm từ kích thước (30 điểm)
+        if 0.005 < area_ratio < 0.6:
+            if 0.02 < area_ratio < 0.3:
+                confidence += 30
+            elif 0.01 < area_ratio < 0.5:
+                confidence += 20
+            else:
+                confidence += 10
         
-        # Điểm dựa trên aspect ratio
-        if 0.5 < aspect_ratio < 3.0:
+        # Điểm từ aspect ratio (25 điểm)
+        if 0.3 < aspect_ratio < 5.0:
             confidence += 25
-        elif 0.2 < aspect_ratio < 8.0:
+        elif 0.1 < aspect_ratio < 10.0:
             confidence += 15
+        elif 0.05 < aspect_ratio < 20.0:
+            confidence += 5
         
-        # Điểm dựa trên solidity (độ đặc)
-        if solidity > 0.8:
+        # Điểm từ solidity (20 điểm)
+        if solidity > 0.85:
             confidence += 20
-        elif solidity > 0.6:
+        elif solidity > 0.7:
             confidence += 15
+        elif solidity > 0.5:
+            confidence += 10
+        elif solidity > 0.3:
+            confidence += 5
         
-        # Điểm dựa trên extent
-        if extent > 0.6:
+        # Điểm từ extent (15 điểm)
+        if extent > 0.7:
             confidence += 15
-        elif extent > 0.4:
+        elif extent > 0.5:
             confidence += 10
+        elif extent > 0.3:
+            confidence += 5
         
-        # Điểm dựa trên vị trí (ưu tiên vùng trung tâm)
-        center_x, center_y = w//2, h//2
-        if 0.2 * img_w < center_x < 0.8 * img_w and 0.2 * img_h < center_y < 0.8 * img_h:
+        # Điểm từ nội dung (10 điểm)
+        if content_analysis["has_text"] or content_analysis["has_lines"] > 1:
             confidence += 10
+        elif content_analysis["density"] > 0.05:
+            confidence += 5
         
-        return confidence
+        # Điểm từ kích thước tuyệt đối
+        if contour_area > 5000:
+            confidence += 10
+        elif contour_area > 2000:
+            confidence += 5
+        
+        # Phạt cho shape quá tròn (có thể là noise)
+        if circularity > 0.8 and area_ratio < 0.01:
+            confidence -= 20
+        
+        # Phạt cho vùng quá nhỏ hoặc quá lớn
+        if area_ratio > 0.7 or area_ratio < 0.002:
+            confidence -= 15
+        
+        return max(0, confidence)
     
-    def _filter_overlapping_boxes(self, candidates):
-        """Loại bỏ các box trùng lặp"""
-        filtered = []
+    def _non_maximum_suppression(self, candidates, iou_threshold=0.3):
+        """Non-Maximum Suppression để loại bỏ overlapping boxes"""
+        if not candidates:
+            return []
         
-        for i, box in enumerate(candidates):
-            is_duplicate = False
-            x0, y0, x1, y1 = box['x0'], box['y0'], box['x1'], box['y1']
-            
-            for j, other in enumerate(filtered):
-                ox0, oy0, ox1, oy1 = other['x0'], other['y0'], other['x1'], other['y1']
-                
-                # Tính IoU (Intersection over Union)
-                intersection_area = max(0, min(x1, ox1) - max(x0, ox0)) * max(0, min(y1, oy1) - max(y0, oy0))
-                union_area = (x1-x0)*(y1-y0) + (ox1-ox0)*(oy1-oy0) - intersection_area
-                
-                if union_area > 0:
-                    iou = intersection_area / union_area
-                    if iou > 0.3:  # Nếu overlap > 30%
-                        is_duplicate = True
-                        break
-            
-            if not is_duplicate:
-                filtered.append(box)
+        # Sắp xếp theo confidence
+        candidates = sorted(candidates, key=lambda x: x['confidence'], reverse=True)
         
-        return filtered
+        keep = []
+        while candidates:
+            # Lấy candidate có confidence cao nhất
+            current = candidates.pop(0)
+            keep.append(current)
+            
+            # Loại bỏ các candidates overlap quá nhiều
+            remaining = []
+            for candidate in candidates:
+                iou = self._calculate_iou(current, candidate)
+                if iou < iou_threshold:
+                    remaining.append(candidate)
+            
+            candidates = remaining
+        
+        return keep
+    
+    def _calculate_iou(self, box1, box2):
+        """Tính Intersection over Union"""
+        x1_1, y1_1, x2_1, y2_1 = box1['x0'], box1['y0'], box1['x1'], box1['y1']
+        x1_2, y1_2, x2_2, y2_2 = box2['x0'], box2['y0'], box2['x1'], box2['y1']
+        
+        # Tính intersection
+        x_left = max(x1_1, x1_2)
+        y_top = max(y1_1, y1_2)
+        x_right = min(x2_1, x2_2)
+        y_bottom = min(y2_1, y2_2)
+        
+        if x_right <= x_left or y_bottom <= y_top:
+            return 0.0
+        
+        intersection = (x_right - x_left) * (y_bottom - y_top)
+        
+        # Tính union
+        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union = area1 + area2 - intersection
+        
+        return intersection / union if union > 0 else 0
+    
+    def _enhance_cropped_image(self, crop):
+        """Cải thiện chất lượng ảnh cắt"""
+        # Khử nhiễu nhẹ
+        crop = cv2.medianBlur(crop, 3)
+        
+        # Tăng cường độ tương phản
+        lab = cv2.cvtColor(crop, cv2.COLOR_RGB2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        l = clahe.apply(l)
+        crop = cv2.merge([l, a, b])
+        crop = cv2.cvtColor(crop, cv2.COLOR_LAB2RGB)
+        
+        return crop
     
     def create_debug_image(self, image_bytes, figures):
-        """Tạo ảnh debug hiển thị các vùng đã cắt"""
+        """Tạo ảnh debug với thông tin chi tiết"""
         img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img_pil)
         
-        colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+        colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'cyan', 'magenta', 'lime']
         
         for i, fig in enumerate(figures):
             color = colors[i % len(colors)]
             bbox = fig['original_bbox']
             x, y, w, h = bbox
             
-            # Vẽ khung
-            draw.rectangle([x, y, x+w, y+h], outline=color, width=3)
+            # Vẽ khung với độ dày tùy theo confidence
+            thickness = 4 if fig['confidence'] > 80 else 3 if fig['confidence'] > 60 else 2
+            draw.rectangle([x, y, x+w, y+h], outline=color, width=thickness)
             
-            # Vẽ label
-            label = f"{fig['name']} ({fig['confidence']:.0f}%)"
-            draw.text((x, y-20), label, fill=color)
+            # Vẽ label với thông tin chi tiết
+            conf_class = "HIGH" if fig['confidence'] > 80 else "MED" if fig['confidence'] > 60 else "LOW"
+            label = f"{fig['name']}\n{conf_class}: {fig['confidence']:.0f}%\nAR: {fig['aspect_ratio']:.2f}"
+            
+            # Vẽ background cho text
+            lines = label.split('\n')
+            max_width = max(len(line) for line in lines) * 7
+            text_height = len(lines) * 15
+            draw.rectangle([x, y-text_height-5, x+max_width, y], fill=color, outline=color)
+            
+            # Vẽ text
+            for j, line in enumerate(lines):
+                draw.text((x+2, y-text_height+j*12), line, fill='white')
         
         return img_pil
     
     def insert_figures_into_text(self, text, figures, img_h, img_w):
-        """Chèn ảnh/bảng vào đúng vị trí trong văn bản với logic cải thiện"""
+        """Chèn ảnh/bảng vào văn bản với logic cải thiện"""
         lines = self._preprocess_text_lines(text)
         
         figures_sorted = sorted(
             [fig for fig in figures if fig.get('bbox')],
-            key=lambda f: (f['bbox'][1], f['bbox'][0])  # Sort by y, then x
+            key=lambda f: (f['bbox'][1], f['bbox'][0])
         )
         
         processed_lines = []
@@ -390,7 +543,7 @@ class AdvancedImageExtractor:
         return '\n'.join(processed_lines)
     
     def _preprocess_text_lines(self, text):
-        """Tiền xử lý văn bản thành các dòng"""
+        """Tiền xử lý văn bản"""
         lines = []
         current_line = ""
         
@@ -405,7 +558,7 @@ class AdvancedImageExtractor:
                 if current_line:
                     lines.append(current_line)
                     current_line = ""
-                if lines:  # Chỉ thêm dòng trống nếu đã có content
+                if lines:
                     lines.append('')
         
         if current_line:
@@ -414,22 +567,24 @@ class AdvancedImageExtractor:
         return lines
     
     def _try_insert_figure(self, line, figures_sorted, used_figures, processed_lines, fig_idx):
-        """Thử chèn ảnh/bảng dựa trên từ khóa cải thiện"""
+        """Thử chèn ảnh/bảng dựa trên từ khóa"""
         lower_line = line.lower()
         
         # Từ khóa cho bảng (mở rộng)
         table_keywords = [
             "bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số", 
             "bảng số liệu", "table", "cho bảng", "theo bảng", "bảng sau",
-            "quan sát bảng", "từ bảng", "dựa vào bảng"
+            "quan sát bảng", "từ bảng", "dựa vào bảng", "bảng trên",
+            "trong bảng", "bảng dưới", "xem bảng"
         ]
         
-        # Từ khóa cho hình (mở rộng)  
+        # Từ khóa cho hình
         image_keywords = [
             "hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", 
             "biểu đồ", "minh họa", "hình", "figure", "chart", "graph",
             "cho hình", "theo hình", "hình sau", "quan sát hình",
-            "từ hình", "dựa vào hình", "sơ đồ"
+            "từ hình", "dựa vào hình", "sơ đồ", "hình trên",
+            "trong hình", "hình dưới"
         ]
         
         # Kiểm tra bảng trước
@@ -455,8 +610,7 @@ class AdvancedImageExtractor:
         return fig_idx
     
     def _insert_remaining_figures(self, processed_lines, figures_sorted, used_figures, fig_idx):
-        """Chèn các ảnh còn lại vào đầu câu hỏi"""
-        # Pattern để nhận diện câu hỏi
+        """Chèn các ảnh còn lại"""
         question_patterns = [
             r"^(Câu|Question|Problem)\s*\d+",
             r"^\d+[\.\)]\s*",
@@ -465,16 +619,13 @@ class AdvancedImageExtractor:
         ]
         
         for i, line in enumerate(processed_lines):
-            # Kiểm tra xem có phải đầu câu hỏi không
             is_question = any(re.match(pattern, line.strip()) for pattern in question_patterns)
             
             if is_question and fig_idx < len(figures_sorted):
-                # Kiểm tra dòng tiếp theo đã có ảnh chưa
                 next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
                 has_image = re.match(r"\[(HÌNH|BẢNG):.*\]", next_line.strip())
                 
                 if not has_image:
-                    # Tìm ảnh chưa sử dụng
                     while (fig_idx < len(figures_sorted) and 
                            figures_sorted[fig_idx]['name'] in used_figures):
                         fig_idx += 1
@@ -569,7 +720,7 @@ class PDFProcessor:
         
         for page_num in range(pdf_document.page_count):
             page = pdf_document[page_num]
-            mat = fitz.Matrix(2.5, 2.5)  # Tăng độ phân giải
+            mat = fitz.Matrix(3.0, 3.0)  # Tăng độ phân giải lên 3x
             pix = page.get_pixmap(matrix=mat)
             img_data = pix.tobytes("png")
             img = Image.open(io.BytesIO(img_data))
@@ -581,7 +732,7 @@ class PDFProcessor:
 class WordExporter:
     @staticmethod
     def create_word_document(latex_content: str, extracted_figures=None, images=None) -> io.BytesIO:
-        """Tạo file Word với equations từ LaTeX và ảnh đã tách"""
+        """Tạo file Word với định dạng LaTeX chuẩn"""
         doc = Document()
         
         # Thêm tiêu đề
@@ -589,11 +740,11 @@ class WordExporter:
         title.alignment = 1
         
         # Thêm thông tin
-        doc.add_paragraph(f"Được tạo bởi PDF/Image to LaTeX Converter Enhanced")
+        doc.add_paragraph(f"Được tạo bởi PDF/Image to LaTeX Converter Ultra")
         doc.add_paragraph(f"Thời gian: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         doc.add_paragraph("")
         
-        # Xử lý nội dung LaTeX
+        # Xử lý nội dung LaTeX với định dạng ${......}$
         lines = latex_content.split('\n')
         
         for line in lines:
@@ -618,21 +769,24 @@ class WordExporter:
             if not line:
                 continue
             
-            # Xử lý các công thức LaTeX
-            if '$$' in line or '$' in line:
+            # Xử lý công thức LaTeX với định dạng ${......}$
+            if '${' in line and '}$' in line:
                 p = doc.add_paragraph()
                 
-                # Xử lý display equations ($$...$$) trước
-                while '$$' in line:
-                    start_idx = line.find('$$')
+                # Xử lý inline equations ${......}$
+                while '${' in line and '}$' in line:
+                    start_idx = line.find('${')
                     if start_idx != -1:
-                        end_idx = line.find('$$', start_idx + 2)
+                        end_idx = line.find('}$', start_idx + 2)
                         if end_idx != -1:
+                            # Thêm text trước công thức
                             if start_idx > 0:
                                 p.add_run(line[:start_idx])
                             
+                            # Thêm công thức
                             equation = line[start_idx+2:end_idx]
-                            eq_run = p.add_run(f"\n[EQUATION: {equation}]\n")
+                            eq_run = p.add_run(f" [{equation}] ")
+                            eq_run.font.italic = True
                             eq_run.font.bold = True
                             
                             line = line[end_idx+2:]
@@ -641,28 +795,11 @@ class WordExporter:
                     else:
                         break
                 
-                # Xử lý inline equations ($...$)
-                while '$' in line:
-                    start_idx = line.find('$')
-                    if start_idx != -1:
-                        end_idx = line.find('$', start_idx + 1)
-                        if end_idx != -1:
-                            if start_idx > 0:
-                                p.add_run(line[:start_idx])
-                            
-                            equation = line[start_idx+1:end_idx]
-                            eq_run = p.add_run(f"[{equation}]")
-                            eq_run.font.italic = True
-                            
-                            line = line[end_idx+1:]
-                        else:
-                            break
-                    else:
-                        break
-                
+                # Thêm phần text còn lại
                 if line.strip():
                     p.add_run(line)
             else:
+                # Thêm đoạn văn bình thường
                 doc.add_paragraph(line)
         
         # Thêm ảnh gốc nếu có (fallback)
@@ -750,7 +887,7 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} {size_names[i]}"
 
 def main():
-    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter - Enhanced</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter - Ultra Enhanced</h1>', unsafe_allow_html=True)
     
     # Sidebar cho API key
     with st.sidebar:
@@ -770,21 +907,22 @@ def main():
         
         st.markdown("---")
         
-        # Cài đặt tách ảnh nâng cao
-        st.subheader("🖼️ Tách ảnh nâng cao")
-        enable_extraction = st.checkbox("Bật tách ảnh/bảng tự động", value=True, 
-                                       help="Tự động tách và chèn ảnh/bảng vào đúng vị trí")
+        # Cài đặt tách ảnh siêu nâng cao
+        st.subheader("🖼️ Tách ảnh siêu chính xác")
+        enable_extraction = st.checkbox("Bật tách ảnh/bảng siêu nâng cao", value=True, 
+                                       help="Thuật toán AI tách ảnh với độ chính xác cực cao")
         
         if enable_extraction:
-            st.write("**Cài đặt nâng cao:**")
-            min_area = st.slider("Diện tích tối thiểu (%)", 0.1, 3.0, 0.5, 0.1,
+            st.write("**Cài đặt siêu nâng cao:**")
+            min_area = st.slider("Diện tích tối thiểu (%)", 0.1, 5.0, 0.3, 0.1,
                                help="% diện tích ảnh gốc") / 100
-            max_figures = st.slider("Số ảnh tối đa", 1, 20, 10, 1)
-            min_size = st.slider("Kích thước tối thiểu (px)", 30, 200, 50, 10)
-            padding = st.slider("Padding xung quanh (px)", 0, 20, 5, 1)
+            max_figures = st.slider("Số ảnh tối đa", 1, 25, 12, 1)
+            min_size = st.slider("Kích thước tối thiểu (px)", 30, 300, 40, 10)
+            padding = st.slider("Padding xung quanh (px)", 0, 30, 8, 1)
+            confidence_threshold = st.slider("Ngưỡng confidence (%)", 30, 90, 50, 5)
             
-            show_debug = st.checkbox("Hiển thị ảnh debug", value=True,
-                                   help="Hiển thị ảnh với các vùng đã phát hiện")
+            show_debug = st.checkbox("Hiển thị ảnh debug nâng cao", value=True,
+                                   help="Hiển thị ảnh với confidence score và phân tích chi tiết")
         
         st.markdown("---")
         st.markdown("""
@@ -794,13 +932,16 @@ def main():
         3. Upload file
         4. Chờ xử lý và tải file Word
         
-        ### 🎯 Tính năng nâng cao:
-        - ✅ Thuật toán cắt ảnh cải tiến
-        - ✅ Hiển thị ảnh cắt với kích thước lớn
-        - ✅ Định dạng chuẩn cho câu hỏi
-        - ✅ Debug mode với confidence score
+        ### 🎯 Tính năng siêu nâng cao:
+        - ✅ Thuật toán AI cắt ảnh với NMS
+        - ✅ Confidence scoring thông minh
+        - ✅ Định dạng LaTeX chuẩn: `${......}$`
+        - ✅ Phân tích nội dung vùng
+        - ✅ Multi-scale edge detection
         
-        ### 📝 Định dạng hỗ trợ:
+        ### 📝 Định dạng LaTeX chuẩn:
+        **Công thức inline:** `${x^2 + y^2}$`
+        
         **Trắc nghiệm 4 phương án:**
         ```
         Câu X: [nội dung]
@@ -832,25 +973,26 @@ def main():
         return
     
     # Tạo tabs
-    tab1, tab2 = st.tabs(["📄 PDF to LaTeX + Enhanced Extract", "🖼️ Image to LaTeX + Enhanced Extract"])
+    tab1, tab2 = st.tabs(["📄 PDF to LaTeX + Ultra Extract", "🖼️ Image to LaTeX + Ultra Extract"])
     
     # Khởi tạo API và ImageExtractor
     try:
         gemini_api = GeminiAPI(api_key)
         if enable_extraction:
-            image_extractor = AdvancedImageExtractor()
+            image_extractor = UltraImageExtractor()
             image_extractor.min_area_ratio = min_area
             image_extractor.max_figures = max_figures
             image_extractor.min_width = min_size
             image_extractor.min_height = min_size
             image_extractor.padding = padding
+            image_extractor.confidence_threshold = confidence_threshold
     except Exception as e:
         st.error(f"❌ Lỗi khởi tạo: {str(e)}")
         return
     
     # Tab xử lý PDF
     with tab1:
-        st.header("📄 Chuyển đổi PDF sang LaTeX + Tách ảnh nâng cao")
+        st.header("📄 Chuyển đổi PDF sang LaTeX + Tách ảnh siêu chính xác")
         
         uploaded_pdf = st.file_uploader(
             "Chọn file PDF",
@@ -866,10 +1008,10 @@ def main():
                 st.info(f"📁 File: {uploaded_pdf.name}")
                 st.info(f"📏 Kích thước: {format_file_size(uploaded_pdf.size)}")
                 
-                with st.spinner("🔄 Đang xử lý PDF..."):
+                with st.spinner("🔄 Đang xử lý PDF với độ phân giải cao..."):
                     try:
                         pdf_images = PDFProcessor.extract_images_and_text(uploaded_pdf)
-                        st.success(f"✅ Đã trích xuất {len(pdf_images)} trang")
+                        st.success(f"✅ Đã trích xuất {len(pdf_images)} trang (3x resolution)")
                         
                         # Hiển thị preview
                         for img, page_num in pdf_images[:2]:
@@ -886,7 +1028,7 @@ def main():
             with col2:
                 st.subheader("⚡ Chuyển đổi sang LaTeX")
                 
-                if st.button("🚀 Bắt đầu chuyển đổi PDF + Tách ảnh nâng cao", key="convert_pdf"):
+                if st.button("🚀 Bắt đầu chuyển đổi siêu nâng cao", key="convert_pdf"):
                     if pdf_images:
                         all_latex_content = []
                         all_extracted_figures = []
@@ -896,7 +1038,7 @@ def main():
                         status_text = st.empty()
                         
                         for i, (img, page_num) in enumerate(pdf_images):
-                            status_text.text(f"Đang xử lý trang {page_num}/{len(pdf_images)}...")
+                            status_text.text(f"Đang xử lý trang {page_num}/{len(pdf_images)} với AI siêu nâng cao...")
                             
                             # Chuyển ảnh thành bytes
                             img_buffer = io.BytesIO()
@@ -916,52 +1058,55 @@ def main():
                                         debug_img = image_extractor.create_debug_image(img_bytes, figures)
                                         all_debug_images.append((debug_img, page_num, figures))
                                     
-                                    st.write(f"🖼️ Trang {page_num}: Tách được {len(figures)} ảnh/bảng")
+                                    high_conf = len([f for f in figures if f['confidence'] > 80])
+                                    st.write(f"🎯 Trang {page_num}: Tách được {len(figures)} ảnh/bảng (High conf: {high_conf})")
                                     
                                 except Exception as e:
                                     st.warning(f"⚠️ Không thể tách ảnh trang {page_num}: {str(e)}")
                             
-                            # Tạo prompt cải tiến cho Gemini
+                            # Tạo prompt siêu cải tiến cho Gemini
                             prompt = f"""
-Hãy chuyển đổi TẤT CẢ nội dung trong ảnh trang {page_num} thành định dạng LaTeX chính xác với cấu trúc chuẩn.
+Hãy chuyển đổi TẤT CẢ nội dung trong ảnh trang {page_num} thành định dạng LaTeX chuẩn với cấu trúc hoàn hảo.
 
-YÊU CẦU ĐỊNH DẠNG:
+⚡ YÊU CẦU ĐỊNH DẠNG CHÍNH XÁC:
 
 1. **Trắc nghiệm 4 phương án:**
 ```
-Câu X: [nội dung câu hỏi]
-A. [đáp án A]
-B. [đáp án B]  
-C. [đáp án C]
-D. [đáp án D]
+Câu X: [nội dung câu hỏi đầy đủ]
+A. [đáp án A chi tiết]
+B. [đáp án B chi tiết]  
+C. [đáp án C chi tiết]
+D. [đáp án D chi tiết]
 ```
 
 2. **Trắc nghiệm đúng sai:**
 ```
-a) [nội dung đáp án a]
-b) [nội dung đáp án b]
-c) [nội dung đáp án c]
-d) [nội dung đáp án d]
+a) [nội dung đáp án a đầy đủ]
+b) [nội dung đáp án b đầy đủ]
+c) [nội dung đáp án c đầy đủ]
+d) [nội dung đáp án d đầy đủ]
 ```
 
 3. **Trả lời ngắn/Tự luận:**
 ```
-Câu X: [nội dung câu hỏi]
+Câu X: [nội dung câu hỏi đầy đủ]
 ```
 
-4. **Công thức toán học:**
-- Inline: ${{x^2 + y^2}}$
-- Display: $${{\\int_0^1 x dx = \\frac{{1}}{{2}}}}$$
+4. **Công thức toán học - QUAN TRỌNG:**
+- **Chỉ sử dụng:** `${{x^2 + y^2}}$` cho công thức inline
+- **VÍ DỤ:** `${{\\frac{{a+b}}{{c-d}}}}$`, `${{\\int_0^1 x dx}}$`, `${{\\sqrt{{x^2+1}}}}$`
+- **KHÔNG dùng:** `$$...$$` hoặc `$...$` 
 
 5. **Hình ảnh và bảng:**
-{'- Khi thấy hình ảnh/đồ thị: sử dụng từ khóa "xem hình", "theo hình", "hình sau"' if enable_extraction else ''}
-{'- Khi thấy bảng: sử dụng từ khóa "bảng sau", "theo bảng", "quan sát bảng"' if enable_extraction else ''}
+{'- Khi thấy hình ảnh/đồ thị: dùng "xem hình", "theo hình", "hình sau", "quan sát hình"' if enable_extraction else ''}
+{'- Khi thấy bảng: dùng "bảng sau", "theo bảng", "quan sát bảng", "trong bảng"' if enable_extraction else ''}
 
-YÊU CẦU KHÁC:
-- Giữ CHÍNH XÁC thứ tự và cấu trúc nội dung
-- Bao gồm TẤT CẢ text và công thức toán học
-- Sử dụng ký hiệu LaTeX chuẩn
+📋 YÊU CẦU CHẤT LƯỢNG:
+- Giữ CHÍNH XÁC 100% thứ tự và cấu trúc nội dung
+- Bao gồm TẤT CẢ text, số, ký hiệu và công thức
 - Đảm bảo định dạng đúng cho từng loại câu hỏi
+- Sử dụng ký hiệu LaTeX chuẩn quốc tế
+- Viết đầy đủ nội dung, không rút gọn
 """
                             
                             # Gọi API
@@ -982,29 +1127,41 @@ YÊU CẦU KHÁC:
                             
                             progress_bar.progress((i + 1) / len(pdf_images))
                         
-                        status_text.text("✅ Hoàn thành chuyển đổi!")
+                        status_text.text("✅ Hoàn thành chuyển đổi siêu nâng cao!")
                         
                         # Hiển thị kết quả
                         combined_latex = "\n".join(all_latex_content)
                         
                         st.markdown('<div class="latex-output">', unsafe_allow_html=True)
-                        st.text_area("📝 Kết quả LaTeX (định dạng chuẩn):", combined_latex, height=300)
+                        st.text_area("📝 Kết quả LaTeX (định dạng chuẩn ${......}$):", combined_latex, height=300)
                         st.markdown('</div>', unsafe_allow_html=True)
                         
-                        # Hiển thị thống kê
+                        # Hiển thị thống kê chi tiết
                         if enable_extraction:
-                            st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} ảnh/bảng")
+                            total_figs = len(all_extracted_figures)
+                            high_conf = len([f for f in all_extracted_figures if f['confidence'] > 80])
+                            medium_conf = len([f for f in all_extracted_figures if 60 <= f['confidence'] <= 80])
+                            low_conf = len([f for f in all_extracted_figures if f['confidence'] < 60])
+                            
+                            st.markdown(f"""
+                            **📊 Thống kê chi tiết:**
+                            - 🎯 Tổng cộng: **{total_figs}** ảnh/bảng đã tách
+                            - <span class="confidence-high">🟢 High confidence (>80%): {high_conf}</span>
+                            - <span class="confidence-medium">🟡 Medium confidence (60-80%): {medium_conf}</span>  
+                            - <span class="confidence-low">🔴 Low confidence (<60%): {low_conf}</span>
+                            """, unsafe_allow_html=True)
                             
                             # Hiển thị ảnh debug và ảnh đã cắt
                             if show_debug and all_debug_images:
-                                st.subheader("🔍 Debug - Ảnh đã phát hiện và cắt")
+                                st.subheader("🔍 Debug Siêu Nâng Cao - Phân Tích AI")
                                 
                                 for debug_img, page_num, figures in all_debug_images:
-                                    st.write(f"**Trang {page_num} - Vùng phát hiện:**")
-                                    st.image(debug_img, caption=f"Đã phát hiện {len(figures)} vùng", use_column_width=True)
+                                    st.write(f"**🔍 Trang {page_num} - AI Detection Analysis:**")
+                                    st.image(debug_img, caption=f"AI phát hiện {len(figures)} vùng với confidence scores", use_column_width=True)
                                     
-                                    # Hiển thị từng ảnh đã cắt với thông tin chi tiết
+                                    # Hiển thị từng ảnh đã cắt với thông tin siêu chi tiết
                                     if figures:
+                                        st.write("**📋 Chi tiết từng vùng đã cắt:**")
                                         cols = st.columns(min(len(figures), 3))
                                         for idx, fig in enumerate(figures):
                                             with cols[idx % 3]:
@@ -1013,16 +1170,22 @@ YÊU CẦU KHÁC:
                                                 img_pil = Image.open(io.BytesIO(img_data))
                                                 
                                                 st.markdown(f'<div class="extracted-image">', unsafe_allow_html=True)
-                                                st.image(img_pil, caption=fig['name'], use_column_width=True)
+                                                st.image(img_pil, caption=f"{fig['name']} - {fig['confidence']:.1f}%", use_column_width=True)
                                                 
-                                                # Thông tin chi tiết
+                                                # Xác định màu confidence
+                                                conf_class = "confidence-high" if fig['confidence'] > 80 else "confidence-medium" if fig['confidence'] >= 60 else "confidence-low"
+                                                
+                                                # Thông tin siêu chi tiết
                                                 st.markdown(f'''
                                                 <div class="image-info">
                                                 <strong>{fig['name']}</strong><br>
-                                                Loại: {"Bảng" if fig['is_table'] else "Hình ảnh"}<br>
-                                                Confidence: {fig['confidence']:.1f}%<br>
-                                                Tỷ lệ: {fig['aspect_ratio']:.2f}<br>
-                                                Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px
+                                                🏷️ Loại: {"📊 Bảng" if fig['is_table'] else "🖼️ Hình ảnh"}<br>
+                                                <span class="{conf_class}">🎯 Confidence: {fig['confidence']:.1f}%</span><br>
+                                                📐 Tỷ lệ: {fig['aspect_ratio']:.2f}<br>
+                                                📏 Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px<br>
+                                                🔺 Solidity: {fig['solidity']:.2f}<br>
+                                                📊 Diện tích: {fig['area']:,}px²<br>
+                                                {'🔍 Phân tích: ' + str(fig.get('content_analysis', {}).get('has_lines', 0)) + ' đường kẻ' if 'content_analysis' in fig else ''}
                                                 </div>
                                                 ''', unsafe_allow_html=True)
                                                 st.markdown('</div>', unsafe_allow_html=True)
@@ -1035,8 +1198,8 @@ YÊU CẦU KHÁC:
                 # Tạo file Word
                 if 'pdf_latex_content' in st.session_state:
                     st.markdown("---")
-                    if st.button("📥 Tạo file Word (định dạng chuẩn + ảnh)", key="create_word_pdf"):
-                        with st.spinner("🔄 Đang tạo file Word..."):
+                    if st.button("📥 Tạo file Word (định dạng chuẩn ${......}$)", key="create_word_pdf"):
+                        with st.spinner("🔄 Đang tạo file Word với định dạng chuẩn..."):
                             try:
                                 extracted_figs = st.session_state.get('pdf_extracted_figures')
                                 original_imgs = st.session_state.pdf_images
@@ -1047,10 +1210,10 @@ YÊU CẦU KHÁC:
                                     images=original_imgs
                                 )
                                 
-                                filename = f"{uploaded_pdf.name.split('.')[0]}_enhanced_latex.docx"
+                                filename = f"{uploaded_pdf.name.split('.')[0]}_ultra_latex.docx"
                                 
                                 st.download_button(
-                                    label="📥 Tải file Word (Enhanced)",
+                                    label="📥 Tải file Word (Ultra Enhanced)",
                                     data=word_buffer.getvalue(),
                                     file_name=filename,
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -1063,14 +1226,14 @@ YÊU CẦU KHÁC:
                                     mime="text/plain"
                                 )
                                 
-                                st.success("✅ File Word với định dạng chuẩn đã được tạo thành công!")
+                                st.success("✅ File Word với định dạng chuẩn ${......}$ đã được tạo thành công!")
                             
                             except Exception as e:
                                 st.error(f"❌ Lỗi tạo file Word: {str(e)}")
     
     # Tab xử lý ảnh (tương tự như PDF tab)
     with tab2:
-        st.header("🖼️ Chuyển đổi Ảnh sang LaTeX + Tách ảnh nâng cao")
+        st.header("🖼️ Chuyển đổi Ảnh sang LaTeX + Tách ảnh siêu chính xác")
         
         uploaded_images = st.file_uploader(
             "Chọn ảnh (có thể chọn nhiều)",
@@ -1100,7 +1263,7 @@ YÊU CẦU KHÁC:
             with col2:
                 st.subheader("⚡ Chuyển đổi sang LaTeX")
                 
-                if st.button("🚀 Bắt đầu chuyển đổi ảnh + Tách ảnh nâng cao", key="convert_images"):
+                if st.button("🚀 Bắt đầu chuyển đổi siêu nâng cao", key="convert_images"):
                     all_latex_content = []
                     all_extracted_figures = []
                     all_original_images = []
@@ -1110,7 +1273,7 @@ YÊU CẦU KHÁC:
                     status_text = st.empty()
                     
                     for i, uploaded_image in enumerate(uploaded_images):
-                        status_text.text(f"Đang xử lý ảnh {i+1}/{len(uploaded_images)}: {uploaded_image.name}")
+                        status_text.text(f"Đang xử lý ảnh {i+1}/{len(uploaded_images)} với AI siêu nâng cao...")
                         
                         image_bytes = uploaded_image.getvalue()
                         image_pil = Image.open(uploaded_image)
@@ -1129,46 +1292,49 @@ YÊU CẦU KHÁC:
                                     debug_img = image_extractor.create_debug_image(image_bytes, figures)
                                     all_debug_images.append((debug_img, uploaded_image.name, figures))
                                 
-                                st.write(f"🖼️ {uploaded_image.name}: Tách được {len(figures)} ảnh/bảng")
+                                high_conf = len([f for f in figures if f['confidence'] > 80])
+                                st.write(f"🎯 {uploaded_image.name}: Tách được {len(figures)} ảnh/bảng (High conf: {high_conf})")
                             except Exception as e:
                                 st.warning(f"⚠️ Không thể tách ảnh {uploaded_image.name}: {str(e)}")
                         
                         prompt = """
-Chuyển đổi TẤT CẢ nội dung trong ảnh thành định dạng LaTeX chính xác với cấu trúc chuẩn.
+Chuyển đổi TẤT CẢ nội dung trong ảnh thành định dạng LaTeX chuẩn với cấu trúc hoàn hảo.
 
-YÊU CẦU ĐỊNH DẠNG:
+⚡ YÊU CẦU ĐỊNH DẠNG CHÍNH XÁC:
 
 1. **Trắc nghiệm 4 phương án:**
 ```
-Câu X: [nội dung câu hỏi]
-A. [đáp án A]
-B. [đáp án B]  
-C. [đáp án C]
-D. [đáp án D]
+Câu X: [nội dung câu hỏi đầy đủ]
+A. [đáp án A chi tiết]
+B. [đáp án B chi tiết]  
+C. [đáp án C chi tiết]
+D. [đáp án D chi tiết]
 ```
 
 2. **Trắc nghiệm đúng sai:**
 ```
-a) [nội dung đáp án a]
-b) [nội dung đáp án b]
-c) [nội dung đáp án c]
-d) [nội dung đáp án d]
+a) [nội dung đáp án a đầy đủ]
+b) [nội dung đáp án b đầy đủ]
+c) [nội dung đáp án c đầy đủ]
+d) [nội dung đáp án d đầy đủ]
 ```
 
 3. **Trả lời ngắn/Tự luận:**
 ```
-Câu X: [nội dung câu hỏi]
+Câu X: [nội dung câu hỏi đầy đủ]
 ```
 
-4. **Công thức toán học:**
-- Inline: ${x^2 + y^2}$
-- Display: $${\\int_0^1 x dx = \\frac{1}{2}}$$
+4. **Công thức toán học - QUAN TRỌNG:**
+- **Chỉ sử dụng:** ${x^2 + y^2}$ cho công thức inline
+- **VÍ DỤ:** ${\\frac{a+b}{c-d}}$, ${\\int_0^1 x dx}$, ${\\sqrt{x^2+1}}$
+- **KHÔNG dùng:** $$...$$ hoặc $...$ 
 
-YÊU CẦU KHÁC:
-- Giữ CHÍNH XÁC thứ tự và cấu trúc nội dung
-- Bao gồm TẤT CẢ text và công thức toán học
-- Sử dụng ký hiệu LaTeX chuẩn
+📋 YÊU CẦU CHẤT LƯỢNG:
+- Giữ CHÍNH XÁC 100% thứ tự và cấu trúc nội dung
+- Bao gồm TẤT CẢ text, số, ký hiệu và công thức
 - Đảm bảo định dạng đúng cho từng loại câu hỏi
+- Sử dụng ký hiệu LaTeX chuẩn quốc tế
+- Viết đầy đủ nội dung, không rút gọn
 """
                         
                         try:
@@ -1192,27 +1358,39 @@ YÊU CẦU KHÁC:
                         
                         progress_bar.progress((i + 1) / len(uploaded_images))
                     
-                    status_text.text("✅ Hoàn thành chuyển đổi!")
+                    status_text.text("✅ Hoàn thành chuyển đổi siêu nâng cao!")
                     
                     # Hiển thị kết quả
                     combined_latex = "\n".join(all_latex_content)
                     
                     st.markdown('<div class="latex-output">', unsafe_allow_html=True)
-                    st.text_area("📝 Kết quả LaTeX (định dạng chuẩn):", combined_latex, height=300)
+                    st.text_area("📝 Kết quả LaTeX (định dạng chuẩn ${......}$):", combined_latex, height=300)
                     st.markdown('</div>', unsafe_allow_html=True)
                     
-                    # Hiển thị thống kê và ảnh debug
+                    # Hiển thị thống kê và ảnh debug (tương tự PDF tab)
                     if enable_extraction:
-                        st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} ảnh/bảng")
+                        total_figs = len(all_extracted_figures)
+                        high_conf = len([f for f in all_extracted_figures if f['confidence'] > 80])
+                        medium_conf = len([f for f in all_extracted_figures if 60 <= f['confidence'] <= 80])
+                        low_conf = len([f for f in all_extracted_figures if f['confidence'] < 60])
+                        
+                        st.markdown(f"""
+                        **📊 Thống kê chi tiết:**
+                        - 🎯 Tổng cộng: **{total_figs}** ảnh/bảng đã tách
+                        - <span class="confidence-high">🟢 High confidence (>80%): {high_conf}</span>
+                        - <span class="confidence-medium">🟡 Medium confidence (60-80%): {medium_conf}</span>  
+                        - <span class="confidence-low">🔴 Low confidence (<60%): {low_conf}</span>
+                        """, unsafe_allow_html=True)
                         
                         if show_debug and all_debug_images:
-                            st.subheader("🔍 Debug - Ảnh đã phát hiện và cắt")
+                            st.subheader("🔍 Debug Siêu Nâng Cao - Phân Tích AI")
                             
                             for debug_img, img_name, figures in all_debug_images:
-                                st.write(f"**{img_name} - Vùng phát hiện:**")
-                                st.image(debug_img, caption=f"Đã phát hiện {len(figures)} vùng", use_column_width=True)
+                                st.write(f"**🔍 {img_name} - AI Detection Analysis:**")
+                                st.image(debug_img, caption=f"AI phát hiện {len(figures)} vùng", use_column_width=True)
                                 
                                 if figures:
+                                    st.write("**📋 Chi tiết từng vùng đã cắt:**")
                                     cols = st.columns(min(len(figures), 3))
                                     for idx, fig in enumerate(figures):
                                         with cols[idx % 3]:
@@ -1220,15 +1398,19 @@ YÊU CẦU KHÁC:
                                             img_pil = Image.open(io.BytesIO(img_data))
                                             
                                             st.markdown(f'<div class="extracted-image">', unsafe_allow_html=True)
-                                            st.image(img_pil, caption=fig['name'], use_column_width=True)
+                                            st.image(img_pil, caption=f"{fig['name']} - {fig['confidence']:.1f}%", use_column_width=True)
+                                            
+                                            conf_class = "confidence-high" if fig['confidence'] > 80 else "confidence-medium" if fig['confidence'] >= 60 else "confidence-low"
                                             
                                             st.markdown(f'''
                                             <div class="image-info">
                                             <strong>{fig['name']}</strong><br>
-                                            Loại: {"Bảng" if fig['is_table'] else "Hình ảnh"}<br>
-                                            Confidence: {fig['confidence']:.1f}%<br>
-                                            Tỷ lệ: {fig['aspect_ratio']:.2f}<br>
-                                            Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px
+                                            🏷️ Loại: {"📊 Bảng" if fig['is_table'] else "🖼️ Hình ảnh"}<br>
+                                            <span class="{conf_class}">🎯 Confidence: {fig['confidence']:.1f}%</span><br>
+                                            📐 Tỷ lệ: {fig['aspect_ratio']:.2f}<br>
+                                            📏 Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px<br>
+                                            🔺 Solidity: {fig['solidity']:.2f}<br>
+                                            📊 Diện tích: {fig['area']:,}px²
                                             </div>
                                             ''', unsafe_allow_html=True)
                                             st.markdown('</div>', unsafe_allow_html=True)
@@ -1241,8 +1423,8 @@ YÊU CẦU KHÁC:
                 # Tạo file Word
                 if 'image_latex_content' in st.session_state:
                     st.markdown("---")
-                    if st.button("📥 Tạo file Word (định dạng chuẩn + ảnh)", key="create_word_images"):
-                        with st.spinner("🔄 Đang tạo file Word..."):
+                    if st.button("📥 Tạo file Word (định dạng chuẩn ${......}$)", key="create_word_images"):
+                        with st.spinner("🔄 Đang tạo file Word với định dạng chuẩn..."):
                             try:
                                 extracted_figs = st.session_state.get('image_extracted_figures')
                                 original_imgs = st.session_state.image_list
@@ -1254,9 +1436,9 @@ YÊU CẦU KHÁC:
                                 )
                                 
                                 st.download_button(
-                                    label="📥 Tải file Word (Enhanced)",
+                                    label="📥 Tải file Word (Ultra Enhanced)",
                                     data=word_buffer.getvalue(),
-                                    file_name="images_enhanced_latex.docx",
+                                    file_name="images_ultra_latex.docx",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                                 )
                                 
@@ -1267,7 +1449,7 @@ YÊU CẦU KHÁC:
                                     mime="text/plain"
                                 )
                                 
-                                st.success("✅ File Word với định dạng chuẩn đã được tạo thành công!")
+                                st.success("✅ File Word với định dạng chuẩn ${......}$ đã được tạo thành công!")
                             
                             except Exception as e:
                                 st.error(f"❌ Lỗi tạo file Word: {str(e)}")
@@ -1277,8 +1459,8 @@ YÊU CẦU KHÁC:
     st.markdown("""
     <div style='text-align: center; color: #666;'>
         <p>Được phát triển với ❤️ sử dụng Streamlit và Gemini 2.0 API</p>
-        <p>✨ <strong>Enhanced Version:</strong> Thuật toán cắt ảnh cải tiến + Định dạng chuẩn!</p>
-        <p>🎯 Hỗ trợ đầy đủ: Trắc nghiệm 4 phương án, Đúng/Sai, Tự luận + AI tách ảnh thông minh</p>
+        <p>✨ <strong>Ultra Enhanced Version:</strong> AI siêu thông minh + Định dạng LaTeX chuẩn ${......}$!</p>
+        <p>🎯 Thuật toán NMS + Multi-scale Detection + Content Analysis + Confidence Scoring</p>
     </div>
     """, unsafe_allow_html=True)
 
