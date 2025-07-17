@@ -58,9 +58,18 @@ st.markdown("""
         margin: 5px 0;
         font-size: 0.9em;
     }
-    .confidence-high { color: #28a745; font-weight: bold; }
-    .confidence-medium { color: #ffc107; font-weight: bold; }
-    .confidence-low { color: #dc3545; font-weight: bold; }
+    .confidence-high { 
+        color: #28a745; 
+        font-weight: bold; 
+    }
+    .confidence-medium { 
+        color: #ffc107; 
+        font-weight: bold; 
+    }
+    .confidence-low { 
+        color: #dc3545; 
+        font-weight: bold; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -774,7 +783,7 @@ class WordExporter:
                 continue
             
             # Xử lý công thức LaTeX với định dạng ${......}$
-            if '${' in line and '}$'
+            if '${' in line and '}
         
         # Thêm ảnh gốc nếu có (fallback)
         if images and not extracted_figures:
