@@ -1,3 +1,7 @@
+"""
+Utility functions for PDF/Image to LaTeX converter
+"""
+
 import re
 import base64
 from typing import List, Tuple, Optional
