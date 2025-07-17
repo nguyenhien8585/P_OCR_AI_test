@@ -1,5 +1,16 @@
-streamlit>=1.28.0
-requests>=2.31.0
+# Core dependencies
+opencv-python>=4.8.0
 Pillow>=9.5.0
-PyMuPDF>=1.21.0
-python-docx>=0.8.11
+numpy>=1.24.0
+
+# For demo app
+streamlit>=1.28.0
+
+# Optional: for advanced image processing
+scikit-image>=0.20.0
+matplotlib>=3.7.0
+
+# Development dependencies (optional)
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
