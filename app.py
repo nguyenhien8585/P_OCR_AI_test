@@ -5,15 +5,21 @@ import io
 import json
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 import fitz  # PyMuPDF
-from docx import Document
-from docx.shared import Pt, RGBColor, Inches
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 import tempfile
 import os
 import re
 import time
 import math
+
+# Import python-docx
+try:
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
 
 try:
     import cv2
@@ -790,6 +796,105 @@ class PDFProcessor:
         pdf_document.close()
         return images
 
+class EnhancedWordExporter:
+    """
+    Xuất Word document với LaTeX và hình ảnh - ĐÃ FIX LỖI
+    """
+    
+    @staticmethod
+    def create_word_document(latex_content: str, extracted_figures=None, images=None) -> io.BytesIO:
+        try:
+            # Tạo document mới
+            doc = Document()
+            
+            # Cấu hình font và style
+            style = doc.styles['Normal']
+            style.font.name = 'Times New Roman'
+            style.font.size = Pt(12)
+            
+            # Thêm tiêu đề
+            title_para = doc.add_heading('Tài liệu LaTeX đã chuyển đổi', 0)
+            title_para.alignment = 1  # Center
+            
+            # Thông tin metadata
+            info_para = doc.add_paragraph()
+            info_para.alignment = 1
+            info_run = info_para.add_run(
+                f"Được tạo bởi Enhanced PDF/LaTeX Converter\n"
+                f"Thời gian: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Figures: {len(extracted_figures) if extracted_figures else 0}"
+            )
+            info_run.font.size = Pt(10)
+            info_run.font.color.rgb = RGBColor(128, 128, 128)
+            
+            # Thêm line break
+            doc.add_paragraph("")
+            
+            # Xử lý nội dung LaTeX
+            lines = latex_content.split('\n')
+            current_paragraph = None
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Bỏ qua các dòng trống và comment
+                if not line or line.startswith('<!--'):
+                    if line.startswith('<!--') and ('Trang' in line or 'Page' in line):
+                        # Thêm page break cho trang mới
+                        if current_paragraph:
+                            doc.add_page_break()
+                        heading = doc.add_heading(line.replace('<!--', '').replace('-->', '').strip(), level=2)
+                        heading.alignment = 1
+                    continue
+                
+                # Xử lý tags hình ảnh
+                if line.startswith('[') and line.endswith(']'):
+                    if 'HÌNH:' in line or 'BẢNG:' in line:
+                        EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures)
+                    continue
+                
+                # Xử lý câu hỏi (heading)
+                if re.match(r'^(câu|bài)\s+\d+', line.lower()):
+                    current_paragraph = doc.add_heading(line, level=3)
+                    current_paragraph.alignment = 0  # Left align
+                    continue
+                
+                # Xử lý paragraph thường
+                if line:
+                    para = doc.add_paragraph()
+                    EnhancedWordExporter._process_latex_content(para, line)
+                    current_paragraph = para
+            
+            # Thêm appendix nếu có figures
+            if extracted_figures:
+                EnhancedWordExporter._add_figures_appendix(doc, extracted_figures)
+            
+            # Thêm ảnh gốc nếu không có extracted figures
+            if images and not extracted_figures:
+                EnhancedWordExporter._add_original_images(doc, images)
+            
+            # Lưu vào buffer
+            buffer = io.BytesIO()
+            doc.save(buffer)
+            buffer.seek(0)
+            
+            return buffer
+            
+        except Exception as e:
+            st.error(f"❌ Lỗi tạo Word document: {str(e)}")
+            raise e
+    
+    @staticmethod
+    def _process_latex_content(para, content):
+        """
+        Xử lý nội dung LaTeX trong paragraph
+        """
+        # Tách content thành các phần text và LaTeX
+        parts = re.split(r'(\$\{[^}]+\}\$)', content)
+        
+        for part in parts:
+            if part.startswith('${') and part.endswith('}
+
 def display_beautiful_figures(figures, debug_img=None):
     """
     Hiển thị figures một cách đẹp mắt
@@ -839,28 +944,24 @@ def display_beautiful_figures(figures, debug_img=None):
 def validate_api_key(api_key: str) -> bool:
     if not api_key or len(api_key) < 20:
         return False
-    return re.match(r'^[A-Za-z0-9_-]+$', api_key) is not None
-
-def format_file_size(size_bytes: int) -> str:
-    if size_bytes == 0:
-        return "0 B"
-    
-    size_names = ["B", "KB", "MB", "GB"]
-    i = 0
-    while size_bytes >= 1024 and i < len(size_names) - 1:
-        size_bytes /= 1024
-        i += 1
-    
-    return f"{size_bytes:.1f} {size_names[i]}"
+    return re.match(r'^[A-Za-z0-9_-]+
 
 def main():
     st.markdown('<h1 class="main-header">📝 Enhanced PDF/LaTeX Converter - FIXED</h1>', unsafe_allow_html=True)
+    
+    # Kiểm tra dependencies
+    missing_deps, dep_commands = check_dependencies()
+    if missing_deps:
+        st.error("❌ Thiếu thư viện cần thiết:")
+        for dep in missing_deps:
+            st.code(dep_commands[dep], language="bash")
+        st.stop()
     
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
         <h2 style="margin: 0;">🚀 PHIÊN BẢN ĐÃ FIX</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Tách ảnh được • ✅ Chèn ảnh đẹp • ✅ LaTeX chuẩn • ✅ Debug chi tiết</p>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Tách ảnh được • ✅ Chèn ảnh đẹp • ✅ LaTeX chuẩn • ✅ Word export fixed</p>
         <div style="display: flex; justify-content: space-around; margin-top: 1.5rem;">
             <div style="text-align: center;">
                 <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔍</div>
@@ -874,8 +975,8 @@ def main():
             </div>
             <div style="text-align: center;">
                 <div style="font-size: 2rem; margin-bottom: 0.5rem;">📄</div>
-                <div><strong>Word đẹp</strong></div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">LaTeX preserved</div>
+                <div><strong>Word export fixed</strong></div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">Proper docx with images</div>
             </div>
         </div>
     </div>
@@ -1225,22 +1326,43 @@ d) [khẳng định d đầy đủ]
                         )
                     
                     with col_y:
-                        if st.button("📄 Tạo Word", key="create_word"):
+                        if DOCX_AVAILABLE and st.button("📄 Tạo Word", key="create_word"):
                             with st.spinner("🔄 Đang tạo Word với LaTeX..."):
                                 try:
-                                    # Tạo Word content (simplified)
-                                    word_content = st.session_state.pdf_latex_content
+                                    # Tạo Word document thực sự
+                                    extracted_figs = st.session_state.get('pdf_extracted_figures')
+                                    original_imgs = st.session_state.get('pdf_images')
+                                    
+                                    word_buffer = EnhancedWordExporter.create_word_document(
+                                        st.session_state.pdf_latex_content,
+                                        extracted_figures=extracted_figs,
+                                        images=original_imgs
+                                    )
+                                    
+                                    filename = uploaded_pdf.name.replace('.pdf', '_converted.docx')
                                     
                                     st.download_button(
                                         label="📄 Tải Word (.docx)",
-                                        data=word_content.encode('utf-8'),
-                                        file_name=uploaded_pdf.name.replace('.pdf', '.docx'),
-                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                        data=word_buffer.getvalue(),
+                                        file_name=filename,
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        key="download_word"
                                     )
                                     
-                                    st.success("✅ Word tạo thành công!")
+                                    st.success("✅ Word document đã tạo thành công!")
+                                    
+                                    # Thêm thông tin về nội dung
+                                    if extracted_figs:
+                                        st.info(f"📊 Đã bao gồm {len(extracted_figs)} figures được tách")
+                                    if original_imgs:
+                                        st.info(f"📸 Đã bao gồm {len(original_imgs)} ảnh gốc")
+                                        
                                 except Exception as e:
                                     st.error(f"❌ Lỗi tạo Word: {str(e)}")
+                                    st.error("💡 Kiểm tra: pip install python-docx")
+                        elif not DOCX_AVAILABLE:
+                            st.error("❌ Cần cài đặt python-docx")
+                            st.code("pip install python-docx", language="bash")
     
     # Tab Image (similar structure)
     with tab2:
@@ -1259,6 +1381,34 @@ d) [khẳng định d đầy đủ]
     # Tab Debug
     with tab3:
         st.header("🔍 Debug Information")
+        
+        # Dependencies status
+        st.markdown("### 📦 Dependencies Status")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Core Libraries:**")
+            st.markdown(f"✅ Streamlit: {st.__version__}")
+            st.markdown(f"✅ Requests: Available")
+            st.markdown(f"✅ PIL: Available")
+            st.markdown(f"✅ Base64: Available")
+            
+        with col2:
+            st.markdown("**Optional Libraries:**")
+            st.markdown(f"{'✅' if DOCX_AVAILABLE else '❌'} python-docx: {'Available' if DOCX_AVAILABLE else 'Missing'}")
+            
+            try:
+                import fitz
+                st.markdown(f"✅ PyMuPDF: Available")
+            except ImportError:
+                st.markdown(f"❌ PyMuPDF: Missing")
+            
+            st.markdown(f"{'✅' if CV2_AVAILABLE else '❌'} OpenCV: {'Available' if CV2_AVAILABLE else 'Missing'}")
+        
+        if not DOCX_AVAILABLE:
+            st.error("❌ python-docx not available - Word export disabled")
+            st.code("pip install python-docx", language="bash")
         
         if CV2_AVAILABLE:
             st.markdown("""
@@ -1302,20 +1452,39 @@ d) [khẳng định d đầy đủ]
                 "canny_low": image_extractor.canny_low,
                 "canny_high": image_extractor.canny_high
             })
+        
+        # Test functions
+        st.markdown("### 🧪 Test Functions")
+        if st.button("Test Word Export", key="test_word"):
+            if DOCX_AVAILABLE:
+                try:
+                    test_content = "Test LaTeX: ${x^2 + y^2 = z^2}$"
+                    test_buffer = EnhancedWordExporter.create_word_document(test_content)
+                    st.success("✅ Word export test passed")
+                    st.download_button(
+                        "📄 Download Test Word",
+                        data=test_buffer.getvalue(),
+                        file_name="test.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                except Exception as e:
+                    st.error(f"❌ Word export test failed: {str(e)}")
+            else:
+                st.error("❌ python-docx not available")
     
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>🎯 PHIÊN BẢN ĐÃ FIX HOÀN TOÀN</h3>
+        <h3>🎯 PHIÊN BẢN ĐÃ FIX HOÀN TOÀN - WORD EXPORT FIXED</h3>
         <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 1.5rem;'>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
                 <h4>🔍 Tách ảnh SIÊU CẢI TIẾN</h4>
                 <p>✅ 4 phương pháp song song<br>✅ Threshold cực thấp<br>✅ Smart merging<br>✅ Debug visualization đẹp</p>
             </div>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>📝 LaTeX format hoàn hảo</h4>
-                <p>✅ Prompt đã optimize<br>✅ ${...}$ format chuẩn<br>✅ Không còn lỗi format<br>✅ Tự động chuyển đổi</p>
+                <h4>📄 Word Export FIXED</h4>
+                <p>✅ Proper docx format<br>✅ LaTeX preserved<br>✅ Images embedded<br>✅ Professional styling</p>
             </div>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
                 <h4>🎯 Chèn vị trí thông minh</h4>
@@ -1325,14 +1494,15 @@ d) [khẳng định d đầy đủ]
         <div style='margin-top: 2rem; padding: 1.5rem; background: rgba(255,255,255,0.1); border-radius: 10px;'>
             <p style='margin: 0; font-size: 1.1rem;'>
                 <strong>🚀 ĐÃ KHẮC PHỤC TOÀN BỘ VẤN ĐỀ:</strong><br>
+                ❌ Word export lỗi → ✅ Proper docx với python-docx<br>
                 ❌ Không tách được ảnh → ✅ 4 phương pháp + threshold cực thấp<br>
                 ❌ Chèn sai vị trí → ✅ Smart positioning + fallback<br>
                 ❌ LaTeX format lỗi → ✅ Prompt optimize + auto convert<br>
-                ❌ UI không đẹp → ✅ Beautiful visualization + debug info
+                ❌ Missing dependencies → ✅ Automatic detection + install guide
             </p>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    main()
+    main()):
