@@ -151,13 +151,15 @@ class ContentBasedFigureFilter:
     """
     
     def __init__(self):
-        self.text_to_image_ratio_threshold = 0.3  # Ngưỡng tỷ lệ text/image
-        self.min_visual_complexity = 0.4         # Ngưỡng độ phức tạp visual
-        self.diagram_detection_threshold = 0.5   # Ngưỡng phát hiện diagram
+        self.text_to_image_ratio_threshold = 0.6  # Tăng từ 0.3 lên 0.6
+        self.min_visual_complexity = 0.2         # Giảm từ 0.4 xuống 0.2
+        self.diagram_detection_threshold = 0.3   # Giảm từ 0.5 xuống 0.3
+        self.enable_fallback = True              # Bật fallback mechanism
+        self.min_estimated_count = 1             # Tối thiểu 1 figure
         
     def analyze_content_and_filter(self, image_bytes, candidates):
         """
-        Phân tích nội dung ảnh và lọc ra đúng số lượng figures thực tế
+        Phân tích nội dung ảnh và lọc ra đúng số lượng figures thực tế - CẢI TIẾN
         """
         if not CV2_AVAILABLE:
             return candidates
@@ -172,6 +174,11 @@ class ContentBasedFigureFilter:
             estimated_figure_count = self._estimate_actual_figure_count(img)
             st.write(f"📊 Ước tính số figures thực tế: {estimated_figure_count}")
             
+            # FALLBACK: Nếu không ước tính được, dùng số lượng hiện tại
+            if estimated_figure_count == 0:
+                estimated_figure_count = min(len(candidates), 5)
+                st.write(f"🔄 Fallback: Sử dụng {estimated_figure_count} figures")
+            
             # Bước 2: Phân tích từng candidate
             analyzed_candidates = []
             for candidate in candidates:
@@ -179,9 +186,19 @@ class ContentBasedFigureFilter:
                 candidate.update(analysis)
                 analyzed_candidates.append(candidate)
             
-            # Bước 3: Lọc theo content analysis
-            filtered_candidates = self._filter_by_content_analysis(analyzed_candidates)
-            st.write(f"📊 Sau lọc content: {len(filtered_candidates)} candidates")
+            # Bước 3: Lọc theo content analysis - RELAXED
+            filtered_candidates = self._filter_by_content_analysis_relaxed(analyzed_candidates)
+            st.write(f"📊 Sau lọc content (relaxed): {len(filtered_candidates)} candidates")
+            
+            # FALLBACK: Nếu lọc quá ít, lấy lại một số candidates tốt nhất
+            if len(filtered_candidates) < estimated_figure_count and self.enable_fallback:
+                st.write("🔄 Fallback: Lấy thêm candidates do lọc quá ít")
+                # Lấy thêm từ analyzed_candidates
+                remaining = [c for c in analyzed_candidates if c not in filtered_candidates]
+                remaining = sorted(remaining, key=lambda x: x.get('final_confidence', 0), reverse=True)
+                needed = estimated_figure_count - len(filtered_candidates)
+                filtered_candidates.extend(remaining[:needed])
+                st.write(f"📊 Sau fallback: {len(filtered_candidates)} candidates")
             
             # Bước 4: Giới hạn theo số lượng ước tính
             final_candidates = self._limit_by_estimated_count(filtered_candidates, estimated_figure_count)
@@ -191,11 +208,12 @@ class ContentBasedFigureFilter:
             
         except Exception as e:
             st.error(f"❌ Lỗi content filter: {str(e)}")
-            return candidates
+            st.write("🔄 Fallback: Trả về candidates gốc")
+            return candidates  # Fallback về candidates gốc
     
     def _estimate_actual_figure_count(self, img):
         """
-        Ước tính số lượng figures thực tế trong ảnh
+        Ước tính số lượng figures thực tế trong ảnh - CẢI TIẾN RELAXED
         """
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -214,25 +232,25 @@ class ContentBasedFigureFilter:
             # Phương pháp 4: Geometric analysis
             geometric_count = self._count_geometric_structures(gray)
             
-            # Kết hợp các phương pháp
-            estimated_count = max(1, min(
-                layout_count,
-                visual_blocks,
-                non_text_regions,
-                geometric_count
-            ))
+            # Kết hợp các phương pháp - RELAXED
+            method_results = [layout_count, visual_blocks, non_text_regions, geometric_count]
+            
+            # Lấy giá trị trung bình thay vì min để tránh bị quá strict
+            estimated_count = max(1, int(sum(method_results) / len(method_results)))
             
             # Điều chỉnh dựa trên kích thước ảnh
             if h * w > 2000000:  # Ảnh lớn
-                estimated_count = min(estimated_count + 1, 8)
+                estimated_count = min(estimated_count + 1, 10)  # Tăng limit
             elif h * w < 500000:  # Ảnh nhỏ
-                estimated_count = max(estimated_count - 1, 1)
+                estimated_count = max(estimated_count, 2)  # Tối thiểu 2 thay vì 1
+            
+            st.write(f"🔍 Method results: layout={layout_count}, visual={visual_blocks}, text={non_text_regions}, geo={geometric_count}")
             
             return estimated_count
             
         except Exception as e:
             st.warning(f"⚠️ Lỗi estimate count: {str(e)}")
-            return 3  # Fallback
+            return 3  # Fallback tăng lên 3
     
     def _analyze_layout_structure(self, gray):
         """
@@ -472,9 +490,66 @@ class ContentBasedFigureFilter:
         else:
             return 'mixed'
     
+    def _filter_by_content_analysis_relaxed(self, candidates):
+        """
+        Lọc candidates dựa trên content analysis - RELAXED VERSION
+        """
+        filtered = []
+        
+        for candidate in candidates:
+            # Lọc theo content type - RELAXED
+            if not candidate.get('is_likely_figure', False):
+                # Nếu không phải figure, kiểm tra fallback conditions
+                visual_complexity = candidate.get('visual_complexity', 0)
+                text_density = candidate.get('text_density', 1)
+                
+                # Nếu có visual complexity cao hoặc text density thấp, vẫn giữ lại
+                if visual_complexity > 0.3 or text_density < 0.7:
+                    st.write(f"🔄 Fallback: Giữ lại candidate mặc dù is_likely_figure=False")
+                else:
+                    continue
+            
+            # Lọc theo visual complexity - RELAXED
+            if candidate.get('visual_complexity', 0) < self.min_visual_complexity:
+                # Nếu visual complexity thấp, kiểm tra có phải diagram không
+                if candidate.get('diagram_score', 0) < 0.2:
+                    continue
+                else:
+                    st.write(f"🔄 Giữ lại do có diagram score cao")
+            
+            # Lọc theo text density - RELAXED
+            if candidate.get('text_density', 1) > self.text_to_image_ratio_threshold:
+                # Nếu text density cao, kiểm tra có phải table không
+                if candidate.get('content_type') != 'table' and candidate.get('aspect_ratio', 1) < 1.5:
+                    continue
+                else:
+                    st.write(f"🔄 Giữ lại do có thể là table")
+            
+            # Lọc theo figure quality - RELAXED
+            if candidate.get('figure_quality', 0) < 0.1:  # Giảm từ 0.3 xuống 0.1
+                continue
+            
+            # Tính content score tổng hợp - RELAXED
+            content_score = (
+                candidate.get('visual_complexity', 0) * 0.25 +  # Giảm weight
+                candidate.get('diagram_score', 0) * 0.25 +      # Giảm weight
+                candidate.get('figure_quality', 0) * 0.25 +     # Giảm weight
+                (1 - candidate.get('text_density', 1)) * 0.25   # Giảm weight
+            )
+            
+            candidate['content_score'] = content_score
+            
+            # Threshold thấp hơn
+            if content_score > 0.2:  # Giảm từ 0.4 xuống 0.2
+                filtered.append(candidate)
+            else:
+                st.write(f"🔄 Loại bỏ candidate với content_score={content_score:.2f}")
+        
+        return filtered
+    
     def _filter_by_content_analysis(self, candidates):
         """
-        Lọc candidates dựa trên content analysis
+        Lọc candidates dựa trên content analysis - ORIGINAL VERSION
         """
         filtered = []
         
