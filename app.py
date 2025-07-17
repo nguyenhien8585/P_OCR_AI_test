@@ -557,7 +557,7 @@ class EnhancedImageExtractor:
             priority += 150  # Tăng priority cho câu hỏi
         
         # High priority: kết thúc với pattern đặc biệt
-        if re.search(r'(sau|dưới đây|bên dưới|như hình|theo hình):?\s*', text):
+        if re.search(r'(sau|dưới đây|bên dưới|như hình|theo hình):?\s*
     
     def _map_figures_to_positions(self, figures, text_structure, img_h):
         """
@@ -898,7 +898,7 @@ class EnhancedWordExporter:
         Xử lý dòng chứa LaTeX equations - GIỮ NGUYÊN ${...}$ và CHUYỂN ĐỔI ```latex```
         """
         # Trước tiên, chuyển đổi ```latex ... ``` thành ${...}$
-        line = re.sub(r'```latex\s*\n(.*?)\n```', r'${\1}', line, flags=re.DOTALL)
+        line = re.sub(r'```latex\s*\n(.*?)\n```', r'${\1}
     
     @staticmethod
     def _insert_extracted_image(doc, img_name, extracted_figures, caption_prefix):
@@ -1685,6 +1685,8 @@ VÍ DỤ ĐÚNG:
 
 if __name__ == "__main__":
     main()
+, line_lower):
+            priority += 120
         
         # High priority: từ khóa toán học
         if re.search(r'(hình hộp|hình chóp|hình thoi|hình vuông|hình chữ nhật)', line_lower):
@@ -2677,7 +2679,8 @@ Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản LaTeX format
 
 if __name__ == "__main__":
     main()
-line = re.sub(r'```latex\s*(.*?)```', r'${\1}', line, flags=re.DOTALL)
+, line, flags=re.DOTALL)
+        line = re.sub(r'```latex\s*(.*?)```', r'${\1}
     
     @staticmethod
     def _insert_extracted_image(doc, img_name, extracted_figures, caption_prefix):
