@@ -37,7 +37,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# CSS cải tiến với hiệu ứng đẹp
+# CSS cải tiến
 st.markdown("""
 <style>
     .main-header {
@@ -152,10 +152,10 @@ class SuperEnhancedImageExtractor:
     
     def __init__(self):
         # Tham số siêu relaxed để tách được nhiều ảnh
-        self.min_area_ratio = 0.0008      # 0.08% diện tích (CỰC NHỎ)
-        self.min_area_abs = 400           # 400 pixels (CỰC NHỎ)
-        self.min_width = 25               # 25 pixels (CỰC NHỎ)
-        self.min_height = 25              # 25 pixels (CỰC NHỎ)
+        self.min_area_ratio = 0.0008      # 0.08% diện tích
+        self.min_area_abs = 400           # 400 pixels
+        self.min_width = 25               # 25 pixels
+        self.min_height = 25              # 25 pixels
         self.max_figures = 30             # Tối đa 30 ảnh
         self.max_area_ratio = 0.80        # Tối đa 80% diện tích
         
@@ -164,7 +164,7 @@ class SuperEnhancedImageExtractor:
         self.quality_threshold = 0.15     # Ngưỡng chất lượng CỰC THẤP
         self.edge_margin = 0.005          # Margin từ rìa CỰC NHỎ
         
-        # Tham số phân tích - CỰC RELAXED
+        # Tham số phân tích
         self.text_ratio_threshold = 0.8   # Ngưỡng tỷ lệ text cao
         self.line_density_threshold = 0.01 # Ngưỡng mật độ line CỰC THẤP
         self.confidence_threshold = 20    # Ngưỡng confidence CỰC THẤP
@@ -181,7 +181,7 @@ class SuperEnhancedImageExtractor:
     
     def extract_figures_and_tables(self, image_bytes):
         """
-        Tách ảnh với thuật toán SIÊU CẢI TIẾN - Đảm bảo tách được
+        Tách ảnh với thuật toán SIÊU CẢI TIẾN
         """
         if not CV2_AVAILABLE:
             st.error("❌ OpenCV không có sẵn! Cần cài đặt: pip install opencv-python")
@@ -195,23 +195,23 @@ class SuperEnhancedImageExtractor:
             
             st.write(f"🔍 Phân tích ảnh kích thước: {w}x{h}")
             
-            # Bước 1: Tiền xử lý ảnh SIÊU CẢI TIẾN
+            # Tiền xử lý
             enhanced_img = self._super_enhance_image(img)
             
-            # Bước 2: Phát hiện regions bằng NHIỀU PHƯƠNG PHÁP
+            # Tách ảnh bằng nhiều phương pháp
             all_candidates = []
             
-            # Phương pháp 1: Edge-based detection
+            # Phương pháp 1: Edge-based
             edge_candidates = self._detect_by_edges(enhanced_img, w, h)
             all_candidates.extend(edge_candidates)
             st.write(f"   📍 Edge detection: {len(edge_candidates)} candidates")
             
-            # Phương pháp 2: Contour-based detection
+            # Phương pháp 2: Contour-based
             contour_candidates = self._detect_by_contours(enhanced_img, w, h)
             all_candidates.extend(contour_candidates)
             st.write(f"   📍 Contour detection: {len(contour_candidates)} candidates")
             
-            # Phương pháp 3: Grid-based detection (cho tables)
+            # Phương pháp 3: Grid-based
             grid_candidates = self._detect_by_grid(enhanced_img, w, h)
             all_candidates.extend(grid_candidates)
             st.write(f"   📍 Grid detection: {len(grid_candidates)} candidates")
@@ -223,11 +223,11 @@ class SuperEnhancedImageExtractor:
             
             st.write(f"📊 Tổng candidates trước lọc: {len(all_candidates)}")
             
-            # Bước 3: Lọc và merge candidates
+            # Lọc và merge
             filtered_candidates = self._filter_and_merge_candidates(all_candidates, w, h)
             st.write(f"📊 Sau lọc và merge: {len(filtered_candidates)}")
             
-            # Bước 4: Tạo final figures
+            # Tạo final figures
             final_figures = self._create_final_figures_enhanced(filtered_candidates, img, w, h)
             st.write(f"✅ Final figures: {len(final_figures)}")
             
@@ -239,15 +239,15 @@ class SuperEnhancedImageExtractor:
     
     def _super_enhance_image(self, img):
         """
-        Tiền xử lý ảnh SIÊU CẢI TIẾN
+        Tiền xử lý ảnh
         """
         # Chuyển sang grayscale
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         
-        # Blur nhẹ để giảm noise
+        # Blur nhẹ
         blurred = cv2.GaussianBlur(gray, (self.blur_kernel, self.blur_kernel), 0)
         
-        # Tăng cường contrast với CLAHE
+        # Tăng cường contrast
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(blurred)
         
@@ -260,7 +260,6 @@ class SuperEnhancedImageExtractor:
         """
         Phát hiện bằng edge detection
         """
-        # Edge detection với threshold thấp
         edges = cv2.Canny(gray_img, self.canny_low, self.canny_high)
         
         # Dilate để nối các edge
@@ -342,7 +341,6 @@ class SuperEnhancedImageExtractor:
             area = ww * hh
             
             if self._is_valid_candidate(x, y, ww, hh, area, w, h):
-                # Bonus cho table-like shapes
                 aspect_ratio = ww / (hh + 1e-6)
                 confidence = 50 if aspect_ratio > 1.5 else 30
                 
@@ -392,7 +390,7 @@ class SuperEnhancedImageExtractor:
     
     def _is_valid_candidate(self, x, y, ww, hh, area, img_w, img_h):
         """
-        Kiểm tra candidate có hợp lệ không - SIÊU RELAXED
+        Kiểm tra candidate có hợp lệ không
         """
         area_ratio = area / (img_w * img_h)
         
@@ -404,7 +402,7 @@ class SuperEnhancedImageExtractor:
             hh < self.min_height):
             return False
         
-        # Kiểm tra vị trí (không quá gần rìa)
+        # Kiểm tra vị trí
         if (x < self.edge_margin * img_w or 
             y < self.edge_margin * img_h or 
             (x + ww) > (1 - self.edge_margin) * img_w or 
@@ -450,7 +448,7 @@ class SuperEnhancedImageExtractor:
             
             if union_area > 0:
                 iou = intersection_area / union_area
-                if iou > 0.25:  # Ngưỡng overlap thấp
+                if iou > 0.25:
                     return True
         
         return False
@@ -594,13 +592,9 @@ class SuperEnhancedImageExtractor:
             
             # Vẽ corner markers
             corner_size = 10
-            # Top-left
             draw.rectangle([x, y, x+corner_size, y+corner_size], fill=color)
-            # Top-right
             draw.rectangle([x+w-corner_size, y, x+w, y+corner_size], fill=color)
-            # Bottom-left
             draw.rectangle([x, y+h-corner_size, x+corner_size, y+h], fill=color)
-            # Bottom-right
             draw.rectangle([x+w-corner_size, y+h-corner_size, x+w, y+h], fill=color)
             
             # Vẽ center point
@@ -620,7 +614,7 @@ class SuperEnhancedImageExtractor:
             text_height = len(label_lines) * 18
             text_width = max(len(line) for line in label_lines) * 10
             
-            # Vẽ background với bo góc
+            # Vẽ background
             label_x = x
             label_y = y - text_height - 10
             if label_y < 0:
@@ -629,10 +623,18 @@ class SuperEnhancedImageExtractor:
             # Background với alpha
             overlay = Image.new('RGBA', img_pil.size, (0, 0, 0, 0))
             overlay_draw = ImageDraw.Draw(overlay)
-            overlay_draw.rounded_rectangle(
-                [label_x, label_y, label_x + text_width, label_y + text_height],
-                radius=8, fill=(*tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)), 200)
-            )
+            
+            try:
+                overlay_draw.rounded_rectangle(
+                    [label_x, label_y, label_x + text_width, label_y + text_height],
+                    radius=8, fill=(*tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)), 200)
+                )
+            except:
+                # Fallback nếu rounded_rectangle không có
+                overlay_draw.rectangle(
+                    [label_x, label_y, label_x + text_width, label_y + text_height],
+                    fill=(*tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)), 200)
+                )
             
             img_pil = Image.alpha_composite(img_pil.convert('RGBA'), overlay).convert('RGB')
             draw = ImageDraw.Draw(img_pil)
@@ -645,7 +647,7 @@ class SuperEnhancedImageExtractor:
     
     def insert_figures_into_text_precisely(self, text, figures, img_h, img_w):
         """
-        Chèn ảnh vào văn bản với độ chính xác cao - CẢI TIẾN
+        Chèn ảnh vào văn bản với độ chính xác cao
         """
         if not figures:
             return text
@@ -660,7 +662,7 @@ class SuperEnhancedImageExtractor:
         
         # Chiến lược chèn cải tiến
         for i, figure in enumerate(sorted_figures):
-            # Tính vị trí chèn dựa trên multiple factors
+            # Tính vị trí chèn
             insertion_line = self._calculate_insertion_position(figure, lines, i, len(sorted_figures))
             
             # Điều chỉnh với offset
@@ -708,7 +710,6 @@ class SuperEnhancedImageExtractor:
         section_size = len(lines) // (total_figures + 1)
         return min(section_size * (fig_index + 1), len(lines) - 1)
 
-# Các class khác giữ nguyên nhưng có một số cải tiến nhỏ
 class GeminiAPI:
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -786,8 +787,7 @@ class PDFProcessor:
         
         for page_num in range(pdf_document.page_count):
             page = pdf_document[page_num]
-            # Tăng độ phân giải
-            mat = fitz.Matrix(3.5, 3.5)  # Tăng lên 3.5x
+            mat = fitz.Matrix(3.5, 3.5)
             pix = page.get_pixmap(matrix=mat)
             img_data = pix.tobytes("png")
             img = Image.open(io.BytesIO(img_data))
@@ -814,7 +814,7 @@ class EnhancedWordExporter:
             
             # Thêm tiêu đề
             title_para = doc.add_heading('Tài liệu LaTeX đã chuyển đổi', 0)
-            title_para.alignment = 1  # Center
+            title_para.alignment = 1
             
             # Thông tin metadata
             info_para = doc.add_paragraph()
@@ -853,10 +853,10 @@ class EnhancedWordExporter:
                         EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures)
                     continue
                 
-                # Xử lý câu hỏi (heading)
+                # Xử lý câu hỏi
                 if re.match(r'^(câu|bài)\s+\d+', line.lower()):
                     current_paragraph = doc.add_heading(line, level=3)
-                    current_paragraph.alignment = 0  # Left align
+                    current_paragraph.alignment = 0
                     continue
                 
                 # Xử lý paragraph thường
@@ -893,7 +893,171 @@ class EnhancedWordExporter:
         parts = re.split(r'(\$\{[^}]+\}\$)', content)
         
         for part in parts:
-            if part.startswith('${') and part.endswith('}
+            if part.startswith('${') and part.endswith('}$'):
+                # Phần LaTeX - giữ nguyên format
+                latex_run = para.add_run(part)
+                latex_run.font.name = 'Cambria Math'
+                latex_run.font.size = Pt(12)
+                latex_run.font.color.rgb = RGBColor(0, 0, 128)
+            else:
+                # Phần text thường
+                if part.strip():
+                    text_run = para.add_run(part)
+                    text_run.font.name = 'Times New Roman'
+                    text_run.font.size = Pt(12)
+    
+    @staticmethod
+    def _insert_figure_to_word(doc, tag_line, extracted_figures):
+        """
+        Chèn hình ảnh vào Word document
+        """
+        try:
+            # Extract figure name from tag
+            if 'HÌNH:' in tag_line:
+                fig_name = tag_line.replace('[🖼️ HÌNH:', '').replace('- Confidence:', '').split('%')[0].strip()
+                caption_prefix = "Hình"
+            elif 'BẢNG:' in tag_line:
+                fig_name = tag_line.replace('[📊 BẢNG:', '').replace('- Confidence:', '').split('%')[0].strip()
+                caption_prefix = "Bảng"
+            else:
+                return
+            
+            # Tìm figure trong extracted_figures
+            target_figure = None
+            if extracted_figures:
+                for fig in extracted_figures:
+                    if fig_name in fig['name']:
+                        target_figure = fig
+                        break
+            
+            if target_figure:
+                # Thêm heading cho figure
+                heading = doc.add_heading(f"{caption_prefix}: {fig_name}", level=4)
+                heading.alignment = 1
+                
+                # Decode và chèn ảnh
+                try:
+                    img_data = base64.b64decode(target_figure['base64'])
+                    img_pil = Image.open(io.BytesIO(img_data))
+                    
+                    # Convert to RGB if needed
+                    if img_pil.mode in ('RGBA', 'LA', 'P'):
+                        img_pil = img_pil.convert('RGB')
+                    
+                    # Lưu temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                        img_pil.save(tmp_file.name, 'PNG')
+                        
+                        # Tính kích thước phù hợp
+                        page_width = doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin
+                        img_width = min(page_width * 0.8, Inches(6))
+                        
+                        # Thêm ảnh vào document
+                        para = doc.add_paragraph()
+                        para.alignment = 1
+                        run = para.add_run()
+                        run.add_picture(tmp_file.name, width=img_width)
+                        
+                        # Cleanup
+                        os.unlink(tmp_file.name)
+                    
+                    # Thêm caption với thông tin
+                    caption_para = doc.add_paragraph()
+                    caption_para.alignment = 1
+                    caption_run = caption_para.add_run(
+                        f"Confidence: {target_figure['confidence']:.1f}% | "
+                        f"Method: {target_figure['method']} | "
+                        f"Aspect: {target_figure['aspect_ratio']:.2f}"
+                    )
+                    caption_run.font.size = Pt(9)
+                    caption_run.font.color.rgb = RGBColor(128, 128, 128)
+                    caption_run.italic = True
+                    
+                except Exception as img_error:
+                    # Nếu không thể chèn ảnh, thêm placeholder
+                    para = doc.add_paragraph(f"[Không thể hiển thị {fig_name}: {str(img_error)}]")
+                    para.alignment = 1
+            else:
+                # Nếu không tìm thấy figure
+                para = doc.add_paragraph(f"[{caption_prefix}: {fig_name} - Không tìm thấy]")
+                para.alignment = 1
+                
+        except Exception as e:
+            st.warning(f"⚠️ Lỗi chèn figure: {str(e)}")
+    
+    @staticmethod
+    def _add_figures_appendix(doc, extracted_figures):
+        """
+        Thêm phụ lục với thông tin figures
+        """
+        try:
+            doc.add_page_break()
+            doc.add_heading('Phụ lục: Thông tin chi tiết về hình ảnh', level=1)
+            
+            # Tạo bảng thống kê
+            table = doc.add_table(rows=1, cols=6)
+            table.style = 'Table Grid'
+            
+            # Header
+            header_cells = table.rows[0].cells
+            headers = ['Tên', 'Loại', 'Confidence', 'Method', 'Aspect', 'Area']
+            for i, header in enumerate(headers):
+                header_cells[i].text = header
+                # Bold header
+                for paragraph in header_cells[i].paragraphs:
+                    for run in paragraph.runs:
+                        run.font.bold = True
+            
+            # Dữ liệu
+            for fig in extracted_figures:
+                row_cells = table.add_row().cells
+                row_cells[0].text = fig['name']
+                row_cells[1].text = 'Bảng' if fig['is_table'] else 'Hình'
+                row_cells[2].text = f"{fig['confidence']:.1f}%"
+                row_cells[3].text = fig['method']
+                row_cells[4].text = f"{fig['aspect_ratio']:.2f}"
+                row_cells[5].text = f"{fig['area_ratio']:.3f}"
+                
+        except Exception as e:
+            st.warning(f"⚠️ Lỗi tạo appendix: {str(e)}")
+    
+    @staticmethod
+    def _add_original_images(doc, images):
+        """
+        Thêm ảnh gốc vào document
+        """
+        try:
+            doc.add_page_break()
+            doc.add_heading('Phụ lục: Hình ảnh gốc', level=1)
+            
+            for i, img in enumerate(images):
+                doc.add_heading(f'Hình gốc {i+1}', level=2)
+                
+                # Convert image
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGB')
+                
+                # Save temporary
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                    img.save(tmp_file.name, 'PNG')
+                    
+                    try:
+                        # Add to document
+                        page_width = doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin
+                        img_width = min(page_width * 0.9, Inches(7))
+                        
+                        para = doc.add_paragraph()
+                        para.alignment = 1
+                        run = para.add_run()
+                        run.add_picture(tmp_file.name, width=img_width)
+                        
+                    except Exception:
+                        doc.add_paragraph(f"[Hình gốc {i+1} - Không thể hiển thị]")
+                    finally:
+                        os.unlink(tmp_file.name)
+                        
+        except Exception as e:
+            st.warning(f"⚠️ Lỗi thêm ảnh gốc: {str(e)}")
 
 def display_beautiful_figures(figures, debug_img=None):
     """
@@ -944,7 +1108,46 @@ def display_beautiful_figures(figures, debug_img=None):
 def validate_api_key(api_key: str) -> bool:
     if not api_key or len(api_key) < 20:
         return False
-    return re.match(r'^[A-Za-z0-9_-]+
+    return re.match(r'^[A-Za-z0-9_-]+$', api_key) is not None
+
+def format_file_size(size_bytes: int) -> str:
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024
+        i += 1
+    
+    return f"{size_bytes:.1f} {size_names[i]}"
+
+def check_dependencies():
+    """
+    Kiểm tra các thư viện cần thiết
+    """
+    dependencies = {
+        'python-docx': 'pip install python-docx',
+        'PyMuPDF': 'pip install PyMuPDF',
+        'opencv-python': 'pip install opencv-python',
+        'scikit-image': 'pip install scikit-image',
+        'scipy': 'pip install scipy'
+    }
+    
+    missing = []
+    
+    if not DOCX_AVAILABLE:
+        missing.append('python-docx')
+    
+    try:
+        import fitz
+    except ImportError:
+        missing.append('PyMuPDF')
+    
+    if not CV2_AVAILABLE:
+        missing.extend(['opencv-python', 'scikit-image', 'scipy'])
+    
+    return missing, dependencies
 
 def main():
     st.markdown('<h1 class="main-header">📝 Enhanced PDF/LaTeX Converter - FIXED</h1>', unsafe_allow_html=True)
@@ -1069,11 +1272,13 @@ def main():
         - ❌ Tách sai/thiếu → ✅ Threshold cực thấp
         - ❌ Chèn sai vị trí → ✅ Smart positioning
         - ❌ LaTeX format sai → ✅ Fixed prompt
+        - ❌ Word export lỗi → ✅ Proper docx
         
         ### 🔧 **Troubleshooting:**
         - Không tách được: Dùng preset "Tách nhiều"
         - Tách nhiều noise: Dùng preset "Chất lượng"
         - Sai vị trí: Kiểm tra pattern câu hỏi
+        - Word lỗi: Kiểm tra python-docx
         """)
     
     if not api_key:
@@ -1498,11 +1703,12 @@ d) [khẳng định d đầy đủ]
                 ❌ Không tách được ảnh → ✅ 4 phương pháp + threshold cực thấp<br>
                 ❌ Chèn sai vị trí → ✅ Smart positioning + fallback<br>
                 ❌ LaTeX format lỗi → ✅ Prompt optimize + auto convert<br>
-                ❌ Missing dependencies → ✅ Automatic detection + install guide
+                ❌ Missing dependencies → ✅ Automatic detection + install guide<br>
+                ❌ Syntax errors → ✅ Clean code rewrite
             </p>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    main()):
+    main()
