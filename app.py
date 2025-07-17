@@ -2677,8 +2677,7 @@ Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản LaTeX format
 
 if __name__ == "__main__":
     main()
-, line, flags=re.DOTALL)
-        line = re.sub(r'```latex\s*(.*?)```', r'${\1}
+line = re.sub(r'```latex\s*(.*?)```', r'${\1}', line, flags=re.DOTALL)
     
     @staticmethod
     def _insert_extracted_image(doc, img_name, extracted_figures, caption_prefix):
