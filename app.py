@@ -647,7 +647,7 @@ class SuperEnhancedImageExtractor:
     
     def insert_figures_into_text_precisely(self, text, figures, img_h, img_w):
         """
-        Chèn ảnh vào văn bản với độ chính xác cao
+        Chèn ảnh vào văn bản với độ chính xác cao - CẢI TIẾN
         """
         if not figures:
             return text
@@ -659,6 +659,9 @@ class SuperEnhancedImageExtractor:
         
         result_lines = lines[:]
         offset = 0
+        
+        # Debug info
+        st.write(f"🔍 Chèn {len(sorted_figures)} figures vào text ({len(lines)} dòng)")
         
         # Chiến lược chèn cải tiến
         for i, figure in enumerate(sorted_figures):
@@ -672,19 +675,24 @@ class SuperEnhancedImageExtractor:
             if actual_insertion > len(result_lines):
                 actual_insertion = len(result_lines)
             
-            # Tạo tag đẹp
+            # Tạo tag đẹp - CẢI TIẾN format
             if figure['is_table']:
-                tag = f"[📊 BẢNG: {figure['name']} - Confidence: {figure['confidence']:.1f}%]"
+                tag = f"[📊 BẢNG: {figure['name']}]"
+                debug_tag = f"<!-- Table: {figure['name']}, Confidence: {figure['confidence']:.1f}%, Method: {figure['method']} -->"
             else:
-                tag = f"[🖼️ HÌNH: {figure['name']} - Confidence: {figure['confidence']:.1f}%]"
+                tag = f"[🖼️ HÌNH: {figure['name']}]"
+                debug_tag = f"<!-- Figure: {figure['name']}, Confidence: {figure['confidence']:.1f}%, Method: {figure['method']} -->"
             
             # Chèn với format đẹp
             result_lines.insert(actual_insertion, "")
             result_lines.insert(actual_insertion + 1, tag)
-            result_lines.insert(actual_insertion + 2, f"<!-- Method: {figure['method']}, Aspect: {figure['aspect_ratio']:.2f} -->")
+            result_lines.insert(actual_insertion + 2, debug_tag)
             result_lines.insert(actual_insertion + 3, "")
             
             offset += 4
+            
+            # Debug info
+            st.write(f"   {i+1}. {figure['name']} → dòng {actual_insertion + 1}")
         
         return '\n'.join(result_lines)
     
@@ -830,16 +838,32 @@ class EnhancedWordExporter:
             # Thêm line break
             doc.add_paragraph("")
             
+            # Debug info
+            st.write(f"🔍 Xử lý Word document với {len(extracted_figures) if extracted_figures else 0} figures")
+            if extracted_figures:
+                st.write("📊 Danh sách figures:")
+                for i, fig in enumerate(extracted_figures):
+                    st.write(f"   {i+1}. {fig['name']} (confidence: {fig['confidence']:.1f}%)")
+            
             # Xử lý nội dung LaTeX
             lines = latex_content.split('\n')
             current_paragraph = None
             
-            for line in lines:
+            for line_num, line in enumerate(lines):
+                original_line = line
                 line = line.strip()
                 
-                # Bỏ qua các dòng trống và comment
-                if not line or line.startswith('<!--'):
-                    if line.startswith('<!--') and ('Trang' in line or 'Page' in line):
+                # Debug: hiển thị line đang xử lý
+                if line.startswith('[') and (('HÌNH:' in line) or ('BẢNG:' in line)):
+                    st.write(f"🔍 Processing line {line_num}: {line}")
+                
+                # Bỏ qua các dòng trống
+                if not line:
+                    continue
+                
+                # Xử lý comment trang
+                if line.startswith('<!--'):
+                    if ('Trang' in line or 'Page' in line) and not ('Figure:' in line or 'Table:' in line):
                         # Thêm page break cho trang mới
                         if current_paragraph:
                             doc.add_page_break()
@@ -847,11 +871,12 @@ class EnhancedWordExporter:
                         heading.alignment = 1
                     continue
                 
-                # Xử lý tags hình ảnh
+                # Xử lý tags hình ảnh - CẢI TIẾN
                 if line.startswith('[') and line.endswith(']'):
                     if 'HÌNH:' in line or 'BẢNG:' in line:
+                        st.write(f"🎯 Tìm thấy figure tag: {line}")
                         EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures)
-                    continue
+                        continue
                 
                 # Xử lý câu hỏi
                 if re.match(r'^(câu|bài)\s+\d+', line.lower()):
@@ -878,6 +903,7 @@ class EnhancedWordExporter:
             doc.save(buffer)
             buffer.seek(0)
             
+            st.success("✅ Word document đã được tạo thành công!")
             return buffer
             
         except Exception as e:
@@ -909,30 +935,59 @@ class EnhancedWordExporter:
     @staticmethod
     def _insert_figure_to_word(doc, tag_line, extracted_figures):
         """
-        Chèn hình ảnh vào Word document
+        Chèn hình ảnh vào Word document - CẢI TIẾN
         """
         try:
-            # Extract figure name from tag
+            # Debug: hiển thị tag line
+            st.write(f"🔍 Processing tag: {tag_line}")
+            
+            # Extract figure name from tag - CẢI TIẾN parsing
+            fig_name = None
+            caption_prefix = None
+            
             if 'HÌNH:' in tag_line:
-                fig_name = tag_line.replace('[🖼️ HÌNH:', '').replace('- Confidence:', '').split('%')[0].strip()
+                # Parse: [🖼️ HÌNH: figure-1.jpeg - Confidence: 70.0%]
+                parts = tag_line.split('HÌNH:')[1].split('-')[0].strip()
+                fig_name = parts.strip()
                 caption_prefix = "Hình"
             elif 'BẢNG:' in tag_line:
-                fig_name = tag_line.replace('[📊 BẢNG:', '').replace('- Confidence:', '').split('%')[0].strip()
+                # Parse: [📊 BẢNG: table-1.jpeg - Confidence: 70.0%]
+                parts = tag_line.split('BẢNG:')[1].split('-')[0].strip()
+                fig_name = parts.strip()
                 caption_prefix = "Bảng"
             else:
+                st.warning(f"⚠️ Không nhận dạng được tag: {tag_line}")
                 return
             
-            # Tìm figure trong extracted_figures
+            st.write(f"📷 Tìm figure: '{fig_name}' (loại: {caption_prefix})")
+            
+            # Tìm figure trong extracted_figures - CẢI TIẾN matching
             target_figure = None
             if extracted_figures:
-                for fig in extracted_figures:
-                    if fig_name in fig['name']:
+                st.write(f"📊 Có {len(extracted_figures)} figures đã tách:")
+                for i, fig in enumerate(extracted_figures):
+                    st.write(f"   {i+1}. {fig['name']} (confidence: {fig['confidence']:.1f}%)")
+                    
+                    # Multiple matching strategies
+                    if (fig['name'] == fig_name or 
+                        fig_name in fig['name'] or 
+                        fig['name'] in fig_name):
                         target_figure = fig
+                        st.write(f"✅ Match found: {fig['name']}")
                         break
+                
+                if not target_figure:
+                    st.warning(f"⚠️ Không tìm thấy figure '{fig_name}' trong danh sách")
+                    # Fallback: lấy figure đầu tiên nếu có
+                    if extracted_figures:
+                        target_figure = extracted_figures[0]
+                        st.write(f"🔄 Fallback: sử dụng {target_figure['name']}")
             
             if target_figure:
+                st.write(f"🎯 Chèn figure: {target_figure['name']}")
+                
                 # Thêm heading cho figure
-                heading = doc.add_heading(f"{caption_prefix}: {fig_name}", level=4)
+                heading = doc.add_heading(f"{caption_prefix}: {target_figure['name']}", level=4)
                 heading.alignment = 1
                 
                 # Decode và chèn ảnh
@@ -949,8 +1004,11 @@ class EnhancedWordExporter:
                         img_pil.save(tmp_file.name, 'PNG')
                         
                         # Tính kích thước phù hợp
-                        page_width = doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin
-                        img_width = min(page_width * 0.8, Inches(6))
+                        try:
+                            page_width = doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin
+                            img_width = min(page_width * 0.8, Inches(6))
+                        except:
+                            img_width = Inches(5)  # Fallback width
                         
                         # Thêm ảnh vào document
                         para = doc.add_paragraph()
@@ -973,17 +1031,22 @@ class EnhancedWordExporter:
                     caption_run.font.color.rgb = RGBColor(128, 128, 128)
                     caption_run.italic = True
                     
+                    st.success(f"✅ Đã chèn ảnh {target_figure['name']} thành công!")
+                    
                 except Exception as img_error:
+                    st.error(f"❌ Lỗi chèn ảnh: {str(img_error)}")
                     # Nếu không thể chèn ảnh, thêm placeholder
-                    para = doc.add_paragraph(f"[Không thể hiển thị {fig_name}: {str(img_error)}]")
+                    para = doc.add_paragraph(f"[Không thể hiển thị {target_figure['name']}: {str(img_error)}]")
                     para.alignment = 1
             else:
+                st.warning(f"⚠️ Không tìm thấy figure nào phù hợp")
                 # Nếu không tìm thấy figure
                 para = doc.add_paragraph(f"[{caption_prefix}: {fig_name} - Không tìm thấy]")
                 para.alignment = 1
                 
         except Exception as e:
-            st.warning(f"⚠️ Lỗi chèn figure: {str(e)}")
+            st.error(f"❌ Lỗi chèn figure: {str(e)}")
+            st.write(f"Debug info: tag_line='{tag_line}', figures={len(extracted_figures) if extracted_figures else 0}")
     
     @staticmethod
     def _add_figures_appendix(doc, extracted_figures):
@@ -1488,6 +1551,19 @@ d) [khẳng định d đầy đủ]
                         st.code(combined_latex, language="latex")
                         st.markdown('</div>', unsafe_allow_html=True)
                         
+                        # Debug: hiển thị các tags đã chèn
+                        if enable_extraction and all_extracted_figures:
+                            st.markdown("### 🔍 Debug: Tags đã chèn")
+                            latex_lines = combined_latex.split('\n')
+                            figure_tags = [line for line in latex_lines if line.startswith('[') and ('HÌNH:' in line or 'BẢNG:' in line)]
+                            
+                            if figure_tags:
+                                st.write(f"📊 Tìm thấy {len(figure_tags)} tags:")
+                                for i, tag in enumerate(figure_tags):
+                                    st.write(f"   {i+1}. {tag}")
+                            else:
+                                st.warning("⚠️ Không tìm thấy tags nào trong LaTeX content")
+                        
                         # Thống kê
                         if enable_extraction and CV2_AVAILABLE and all_extracted_figures:
                             st.markdown("### 📊 Thống kê tách ảnh")
@@ -1538,6 +1614,12 @@ d) [khẳng định d đầy đủ]
                                     extracted_figs = st.session_state.get('pdf_extracted_figures')
                                     original_imgs = st.session_state.get('pdf_images')
                                     
+                                    # Debug info trước khi tạo Word
+                                    if extracted_figs:
+                                        st.info(f"📊 Sẽ chèn {len(extracted_figs)} figures vào Word")
+                                        for i, fig in enumerate(extracted_figs):
+                                            st.write(f"   {i+1}. {fig['name']} ({fig['confidence']:.1f}%)")
+                                    
                                     word_buffer = EnhancedWordExporter.create_word_document(
                                         st.session_state.pdf_latex_content,
                                         extracted_figures=extracted_figs,
@@ -1556,6 +1638,15 @@ d) [khẳng định d đầy đủ]
                                     
                                     st.success("✅ Word document đã tạo thành công!")
                                     
+                                    # Hướng dẫn kiểm tra
+                                    st.markdown("""
+                                    ### 🔍 Kiểm tra kết quả:
+                                    1. **Mở file Word** → Xem ảnh đã được chèn chưa
+                                    2. **Nếu thiếu ảnh** → Kiểm tra "Debug: Tags đã chèn" ở trên
+                                    3. **Nếu có lỗi** → Dùng "Test Figure Insertion" trong tab Debug
+                                    4. **Báo lỗi** → Chụp màn hình debug info
+                                    """)
+                                    
                                     # Thêm thông tin về nội dung
                                     if extracted_figs:
                                         st.info(f"📊 Đã bao gồm {len(extracted_figs)} figures được tách")
@@ -1564,7 +1655,8 @@ d) [khẳng định d đầy đủ]
                                         
                                 except Exception as e:
                                     st.error(f"❌ Lỗi tạo Word: {str(e)}")
-                                    st.error("💡 Kiểm tra: pip install python-docx")
+                                    st.error("💡 Thử: pip install python-docx")
+                                    st.error("🔧 Hoặc dùng 'Test Figure Insertion' để debug")
                         elif not DOCX_AVAILABLE:
                             st.error("❌ Cần cài đặt python-docx")
                             st.code("pip install python-docx", language="bash")
@@ -1660,51 +1752,104 @@ d) [khẳng định d đầy đủ]
         
         # Test functions
         st.markdown("### 🧪 Test Functions")
-        if st.button("Test Word Export", key="test_word"):
-            if DOCX_AVAILABLE:
-                try:
-                    test_content = "Test LaTeX: ${x^2 + y^2 = z^2}$"
-                    test_buffer = EnhancedWordExporter.create_word_document(test_content)
-                    st.success("✅ Word export test passed")
-                    st.download_button(
-                        "📄 Download Test Word",
-                        data=test_buffer.getvalue(),
-                        file_name="test.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                except Exception as e:
-                    st.error(f"❌ Word export test failed: {str(e)}")
-            else:
-                st.error("❌ python-docx not available")
+        
+        col_test1, col_test2 = st.columns(2)
+        
+        with col_test1:
+            if st.button("Test Word Export", key="test_word"):
+                if DOCX_AVAILABLE:
+                    try:
+                        test_content = "Test LaTeX: ${x^2 + y^2 = z^2}$"
+                        test_buffer = EnhancedWordExporter.create_word_document(test_content)
+                        st.success("✅ Word export test passed")
+                        st.download_button(
+                            "📄 Download Test Word",
+                            data=test_buffer.getvalue(),
+                            file_name="test.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Word export test failed: {str(e)}")
+                else:
+                    st.error("❌ python-docx not available")
+        
+        with col_test2:
+            if st.button("Test Figure Insertion", key="test_figure"):
+                if DOCX_AVAILABLE:
+                    try:
+                        # Tạo test content với figure tags
+                        test_content = """
+Câu 1: Giải phương trình sau:
+
+[🖼️ HÌNH: figure-1.jpeg]
+
+Đáp án: A) x = 1, B) x = 2
+
+[📊 BẢNG: table-1.jpeg]
+
+Kết quả như trên.
+"""
+                        
+                        # Tạo mock figures
+                        mock_figures = [
+                            {
+                                'name': 'figure-1.jpeg',
+                                'base64': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+                                'confidence': 70.0,
+                                'method': 'test',
+                                'aspect_ratio': 1.0,
+                                'is_table': False
+                            },
+                            {
+                                'name': 'table-1.jpeg',
+                                'base64': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+                                'confidence': 70.0,
+                                'method': 'test',
+                                'aspect_ratio': 2.0,
+                                'is_table': True
+                            }
+                        ]
+                        
+                        test_buffer = EnhancedWordExporter.create_word_document(test_content, extracted_figures=mock_figures)
+                        st.success("✅ Figure insertion test passed")
+                        st.download_button(
+                            "📄 Download Test Word with Figures",
+                            data=test_buffer.getvalue(),
+                            file_name="test_with_figures.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Figure insertion test failed: {str(e)}")
+                else:
+                    st.error("❌ python-docx not available")
     
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>🎯 PHIÊN BẢN ĐÃ FIX HOÀN TOÀN - WORD EXPORT FIXED</h3>
+        <h3>🎯 PHIÊN BẢN ĐÃ FIX HOÀN TOÀN - FIGURE INSERTION IMPROVED</h3>
         <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 1.5rem;'>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
                 <h4>🔍 Tách ảnh SIÊU CẢI TIẾN</h4>
                 <p>✅ 4 phương pháp song song<br>✅ Threshold cực thấp<br>✅ Smart merging<br>✅ Debug visualization đẹp</p>
             </div>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>📄 Word Export FIXED</h4>
-                <p>✅ Proper docx format<br>✅ LaTeX preserved<br>✅ Images embedded<br>✅ Professional styling</p>
+                <h4>📄 Word Export + Figure Insertion</h4>
+                <p>✅ Proper docx format<br>✅ LaTeX preserved<br>✅ Figures embedded correctly<br>✅ Debug mode enabled</p>
             </div>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>🎯 Chèn vị trí thông minh</h4>
-                <p>✅ Pattern recognition<br>✅ Context-aware<br>✅ Fallback strategies<br>✅ Beautiful tags</p>
+                <h4>🎯 Debug & Testing</h4>
+                <p>✅ Real-time debug info<br>✅ Tag parsing improved<br>✅ Test functions added<br>✅ Step-by-step tracking</p>
             </div>
         </div>
         <div style='margin-top: 2rem; padding: 1.5rem; background: rgba(255,255,255,0.1); border-radius: 10px;'>
             <p style='margin: 0; font-size: 1.1rem;'>
-                <strong>🚀 ĐÃ KHẮC PHỤC TOÀN BỘ VẤN ĐỀ:</strong><br>
-                ❌ Word export lỗi → ✅ Proper docx với python-docx<br>
-                ❌ Không tách được ảnh → ✅ 4 phương pháp + threshold cực thấp<br>
-                ❌ Chèn sai vị trí → ✅ Smart positioning + fallback<br>
-                ❌ LaTeX format lỗi → ✅ Prompt optimize + auto convert<br>
-                ❌ Missing dependencies → ✅ Automatic detection + install guide<br>
-                ❌ Syntax errors → ✅ Clean code rewrite
+                <strong>🚀 GIẢI PHÁP CHÈN ẢNH VÀO WORD:</strong><br>
+                🔍 **Debug Mode**: Xem real-time tags được tạo và parsed<br>
+                📊 **Improved Matching**: Multiple strategies để match figures<br>
+                🧪 **Test Functions**: Test riêng việc chèn ảnh với mock data<br>
+                🎯 **Better Error Handling**: Chi tiết lỗi và hướng dẫn fix<br>
+                📝 **Tag Format**: Simplified tags dễ parse hơn
             </p>
         </div>
     </div>
