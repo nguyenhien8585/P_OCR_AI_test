@@ -1,13 +1,10 @@
-"""
-Utility functions for PDF/Image to LaTeX converter
-"""
-
 import re
 import base64
 from typing import List, Tuple, Optional
 import streamlit as st
 from PIL import Image
 import io
+import time
 
 def clean_latex_content(latex_text: str) -> str:
     """
@@ -213,7 +210,7 @@ class ConversionHistory:
             st.session_state.conversion_history = []
         
         entry = {
-            'timestamp': str(st.time()),
+            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
             'input_type': input_type,
             'filename': filename,
             'success': success,
@@ -221,6 +218,7 @@ class ConversionHistory:
         }
         
         st.session_state.conversion_history.append(entry)
+        st.session_state.conversion_time = entry['timestamp']
         
         # Giới hạn lịch sử chỉ 10 entries gần nhất
         if len(st.session_state.conversion_history) > 10:
@@ -240,12 +238,15 @@ class ConversionHistory:
             type_icon = "📄" if entry['input_type'] == 'PDF' else "🖼️"
             
             st.write(f"{status_icon} {type_icon} **{entry['filename']}** - {entry['latex_length']} chars LaTeX")
+            st.caption(f"⏰ {entry['timestamp']}")
     
     @staticmethod
     def clear_history():
         """Xóa lịch sử"""
         if 'conversion_history' in st.session_state:
             del st.session_state.conversion_history
+        if 'conversion_time' in st.session_state:
+            del st.session_state.conversion_time
         st.success("Đã xóa lịch sử conversion")
 
 def show_tips_and_tricks():
