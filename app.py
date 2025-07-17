@@ -3,7 +3,7 @@ import requests
 import base64
 import io
 import json
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import fitz  # PyMuPDF
 from docx import Document
 import tempfile
@@ -15,7 +15,7 @@ import numpy as np
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/Image to LaTeX Converter",
+    page_title="PDF/Image to LaTeX Converter - Enhanced",
     page_icon="📝",
     layout="wide"
 )
@@ -44,112 +44,173 @@ st.markdown("""
         color: #dc3545;
         font-weight: bold;
     }
+    .extracted-image {
+        border: 2px solid #2E86AB;
+        border-radius: 8px;
+        margin: 10px 0;
+        padding: 5px;
+    }
+    .image-info {
+        background-color: #e8f4f8;
+        padding: 8px;
+        border-radius: 4px;
+        margin: 5px 0;
+        font-size: 0.9em;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-class ImageExtractor:
+class AdvancedImageExtractor:
     """
-    Class để tách ảnh/bảng từ ảnh gốc và chèn vào đúng vị trí trong văn bản
+    Class cải tiến để tách ảnh/bảng từ ảnh gốc với độ chính xác cao
     """
     
     def __init__(self):
-        self.min_area_ratio = 0.008    # Diện tích tối thiểu (% của ảnh gốc)
-        self.min_area_abs = 2500       # Diện tích tối thiểu (pixel)
-        self.min_width = 70            # Chiều rộng tối thiểu
-        self.min_height = 70           # Chiều cao tối thiểu
-        self.max_figures = 8           # Số lượng ảnh tối đa
+        self.min_area_ratio = 0.005    # Diện tích tối thiểu (% của ảnh gốc)
+        self.min_area_abs = 1500       # Diện tích tối thiểu (pixel)
+        self.min_width = 50            # Chiều rộng tối thiểu
+        self.min_height = 50           # Chiều cao tối thiểu
+        self.max_figures = 10          # Số lượng ảnh tối đa
+        self.padding = 5               # Padding xung quanh ảnh cắt
     
     def extract_figures_and_tables(self, image_bytes):
-        """Tách ảnh và bảng từ ảnh gốc"""
+        """Tách ảnh và bảng từ ảnh gốc với thuật toán cải tiến"""
         # 1. Đọc ảnh
         img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img = np.array(img_pil)
         h, w = img.shape[:2]
         
-        # 2. Tiền xử lý ảnh
+        # 2. Tiền xử lý ảnh nhiều bước
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        
+        # Khử nhiễu
+        gray = cv2.medianBlur(gray, 3)
         gray = cv2.GaussianBlur(gray, (3, 3), 0)
         
-        # 3. Tăng cường độ tương phản
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        # Tăng cường độ tương phản adaptive
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
         
-        # 4. Tạo ảnh nhị phân
-        thresh = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, 
-            cv2.THRESH_BINARY_INV, 25, 10
+        # 3. Phát hiện cạnh với nhiều phương pháp
+        # Phương pháp 1: Adaptive threshold
+        thresh1 = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY_INV, 11, 2
         )
         
-        # 5. Làm dày các đường viền
-        kernel = np.ones((3, 3), np.uint8)
-        thresh = cv2.dilate(thresh, kernel, iterations=1)
+        # Phương pháp 2: Canny edge detection
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
         
-        # 6. Tìm các contour
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Phương pháp 3: Morphological operations
+        kernel_rect = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        thresh2 = cv2.morphologyEx(thresh1, cv2.MORPH_CLOSE, kernel_rect)
         
-        # 7. Lọc và phân loại các vùng
+        # Kết hợp các phương pháp
+        combined = cv2.bitwise_or(thresh2, edges)
+        
+        # 4. Làm dày các đường viền
+        kernel = np.ones((2, 2), np.uint8)
+        combined = cv2.dilate(combined, kernel, iterations=1)
+        
+        # 5. Tìm các contour với hierarchy
+        contours, hierarchy = cv2.findContours(
+            combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        
+        # 6. Lọc và phân loại các vùng với nhiều tiêu chí
         candidates = []
-        for cnt in contours:
+        for i, cnt in enumerate(contours):
+            # Tính toán bounding box
             x, y, ww, hh = cv2.boundingRect(cnt)
             area = ww * hh
             area_ratio = area / (w * h)
             aspect_ratio = ww / (hh + 1e-6)
             
-            # Lọc theo kích thước
+            # Lọc theo kích thước cơ bản
             if (area < self.min_area_abs or 
                 area_ratio < self.min_area_ratio or 
-                area_ratio > 0.6):
+                area_ratio > 0.7):
                 continue
             
             if ww < self.min_width or hh < self.min_height:
                 continue
             
-            if not (0.2 < aspect_ratio < 8.0):
+            # Lọc aspect ratio hợp lý
+            if not (0.1 < aspect_ratio < 15.0):
                 continue
             
-            # Loại bỏ vùng ở rìa
-            if (x < 0.03*w or y < 0.03*h or 
-                (x+ww) > 0.97*w or (y+hh) > 0.97*h):
+            # Loại bỏ vùng ở rìa ảnh
+            margin = 0.02
+            if (x < margin*w or y < margin*h or 
+                (x+ww) > (1-margin)*w or (y+hh) > (1-margin)*h):
                 continue
             
-            # Kiểm tra độ đặc
+            # Tính các đặc trưng hình học
             hull = cv2.convexHull(cnt)
             hull_area = cv2.contourArea(hull)
+            contour_area = cv2.contourArea(cnt)
+            
             if hull_area == 0:
                 continue
-            solidity = float(area) / hull_area
-            if solidity < 0.4:
+                
+            solidity = float(contour_area) / hull_area
+            if solidity < 0.3:  # Loại bỏ shape quá phức tạp
                 continue
             
-            # Phân loại bảng vs hình
-            is_table = (ww > 0.25*w and hh > 0.05*h and 
-                       aspect_ratio > 2.0 and aspect_ratio < 10.0)
+            # Tính extent (tỷ lệ fill bounding box)
+            extent = float(contour_area) / area
+            if extent < 0.2:  # Loại bỏ shape quá thưa
+                continue
+            
+            # Phân loại bảng vs hình dựa trên nhiều tiêu chí
+            is_table = self._classify_as_table(x, y, ww, hh, w, h, cnt, gray)
+            
+            # Tính toán điểm confidence
+            confidence = self._calculate_confidence(
+                area_ratio, aspect_ratio, solidity, extent, ww, hh, w, h
+            )
             
             candidates.append({
                 "area": area,
                 "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
+                "width": ww, "height": hh,
                 "is_table": is_table,
-                "bbox": (x, y, ww, hh)
+                "confidence": confidence,
+                "aspect_ratio": aspect_ratio,
+                "solidity": solidity,
+                "extent": extent,
+                "bbox": (x, y, ww, hh),
+                "contour": cnt
             })
         
-        # 8. Sắp xếp và lọc
-        candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
-        candidates = self._filter_nested_boxes(candidates)
+        # 7. Sắp xếp theo confidence và area
+        candidates = sorted(candidates, key=lambda f: f['confidence'], reverse=True)
+        candidates = self._filter_overlapping_boxes(candidates)
         candidates = candidates[:self.max_figures]
+        
+        # 8. Sắp xếp lại theo vị trí (top-to-bottom, left-to-right)
         candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
         
-        # 9. Tạo danh sách ảnh kết quả
+        # 9. Tạo danh sách ảnh kết quả với padding
         final_figures = []
         img_idx = 0
         table_idx = 0
         
         for fig_data in candidates:
-            # Cắt ảnh
-            crop = img[fig_data["y0"]:fig_data["y1"], fig_data["x0"]:fig_data["x1"]]
+            # Cắt ảnh với padding
+            x0 = max(0, fig_data["x0"] - self.padding)
+            y0 = max(0, fig_data["y0"] - self.padding)
+            x1 = min(w, fig_data["x1"] + self.padding)
+            y1 = min(h, fig_data["y1"] + self.padding)
+            
+            crop = img[y0:y1, x0:x1]
+            
+            if crop.size == 0:
+                continue
             
             # Chuyển thành base64
             buf = io.BytesIO()
-            Image.fromarray(crop).save(buf, format="JPEG")
+            Image.fromarray(crop).save(buf, format="JPEG", quality=95)
             b64 = base64.b64encode(buf.getvalue()).decode()
             
             # Đặt tên file
@@ -164,39 +225,146 @@ class ImageExtractor:
                 "name": name,
                 "base64": b64,
                 "is_table": fig_data["is_table"],
-                "bbox": fig_data["bbox"]
+                "bbox": (x0, y0, x1-x0, y1-y0),
+                "original_bbox": fig_data["bbox"],
+                "confidence": fig_data["confidence"],
+                "aspect_ratio": fig_data["aspect_ratio"],
+                "area": fig_data["area"]
             })
         
         return final_figures, h, w
     
-    def _filter_nested_boxes(self, candidates):
-        """Loại bỏ các box nằm bên trong box khác"""
+    def _classify_as_table(self, x, y, w, h, img_w, img_h, contour, gray_img):
+        """Phân loại xem vùng này là bảng hay hình ảnh"""
+        aspect_ratio = w / (h + 1e-6)
+        
+        # Kiểm tra tỷ lệ và kích thước cho bảng
+        size_score = 0
+        if w > 0.3 * img_w:  # Bảng thường rộng
+            size_score += 2
+        if h > 0.1 * img_h and h < 0.6 * img_h:  # Chiều cao vừa phải
+            size_score += 1
+        
+        # Kiểm tra aspect ratio
+        ratio_score = 0
+        if 2.0 < aspect_ratio < 8.0:  # Bảng thường dài hơn cao
+            ratio_score += 2
+        elif 1.2 < aspect_ratio < 12.0:
+            ratio_score += 1
+        
+        # Kiểm tra đường kẻ ngang trong vùng
+        roi = gray_img[y:y+h, x:x+w]
+        horizontal_lines = self._detect_horizontal_lines(roi)
+        line_score = min(horizontal_lines * 0.5, 2)
+        
+        total_score = size_score + ratio_score + line_score
+        return total_score >= 3
+    
+    def _detect_horizontal_lines(self, roi):
+        """Phát hiện đường kẻ ngang trong vùng (dấu hiệu của bảng)"""
+        if roi.shape[0] < 10 or roi.shape[1] < 10:
+            return 0
+        
+        # Tạo kernel dài ngang để detect đường kẻ ngang
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (roi.shape[1]//3, 1))
+        thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        horizontal_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        
+        # Đếm số đường kẻ
+        lines = cv2.HoughLinesP(horizontal_lines, 1, np.pi/180, 
+                               threshold=roi.shape[1]//4, minLineLength=roi.shape[1]//3)
+        
+        return len(lines) if lines is not None else 0
+    
+    def _calculate_confidence(self, area_ratio, aspect_ratio, solidity, extent, w, h, img_w, img_h):
+        """Tính điểm confidence cho việc cắt ảnh"""
+        confidence = 0
+        
+        # Điểm dựa trên kích thước
+        if 0.01 < area_ratio < 0.5:
+            confidence += 30
+        elif 0.005 < area_ratio < 0.01:
+            confidence += 20
+        
+        # Điểm dựa trên aspect ratio
+        if 0.5 < aspect_ratio < 3.0:
+            confidence += 25
+        elif 0.2 < aspect_ratio < 8.0:
+            confidence += 15
+        
+        # Điểm dựa trên solidity (độ đặc)
+        if solidity > 0.8:
+            confidence += 20
+        elif solidity > 0.6:
+            confidence += 15
+        
+        # Điểm dựa trên extent
+        if extent > 0.6:
+            confidence += 15
+        elif extent > 0.4:
+            confidence += 10
+        
+        # Điểm dựa trên vị trí (ưu tiên vùng trung tâm)
+        center_x, center_y = w//2, h//2
+        if 0.2 * img_w < center_x < 0.8 * img_w and 0.2 * img_h < center_y < 0.8 * img_h:
+            confidence += 10
+        
+        return confidence
+    
+    def _filter_overlapping_boxes(self, candidates):
+        """Loại bỏ các box trùng lặp"""
         filtered = []
+        
         for i, box in enumerate(candidates):
+            is_duplicate = False
             x0, y0, x1, y1 = box['x0'], box['y0'], box['x1'], box['y1']
-            is_nested = False
             
-            for j, other in enumerate(candidates):
-                if i == j:
-                    continue
+            for j, other in enumerate(filtered):
                 ox0, oy0, ox1, oy1 = other['x0'], other['y0'], other['x1'], other['y1']
                 
-                if x0 >= ox0 and y0 >= oy0 and x1 <= ox1 and y1 <= oy1:
-                    is_nested = True
-                    break
+                # Tính IoU (Intersection over Union)
+                intersection_area = max(0, min(x1, ox1) - max(x0, ox0)) * max(0, min(y1, oy1) - max(y0, oy0))
+                union_area = (x1-x0)*(y1-y0) + (ox1-ox0)*(oy1-oy0) - intersection_area
+                
+                if union_area > 0:
+                    iou = intersection_area / union_area
+                    if iou > 0.3:  # Nếu overlap > 30%
+                        is_duplicate = True
+                        break
             
-            if not is_nested:
+            if not is_duplicate:
                 filtered.append(box)
         
         return filtered
     
+    def create_debug_image(self, image_bytes, figures):
+        """Tạo ảnh debug hiển thị các vùng đã cắt"""
+        img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        draw = ImageDraw.Draw(img_pil)
+        
+        colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+        
+        for i, fig in enumerate(figures):
+            color = colors[i % len(colors)]
+            bbox = fig['original_bbox']
+            x, y, w, h = bbox
+            
+            # Vẽ khung
+            draw.rectangle([x, y, x+w, y+h], outline=color, width=3)
+            
+            # Vẽ label
+            label = f"{fig['name']} ({fig['confidence']:.0f}%)"
+            draw.text((x, y-20), label, fill=color)
+        
+        return img_pil
+    
     def insert_figures_into_text(self, text, figures, img_h, img_w):
-        """Chèn ảnh/bảng vào đúng vị trí trong văn bản"""
+        """Chèn ảnh/bảng vào đúng vị trí trong văn bản với logic cải thiện"""
         lines = self._preprocess_text_lines(text)
         
         figures_sorted = sorted(
             [fig for fig in figures if fig.get('bbox')],
-            key=lambda f: (f['bbox'][1], f['bbox'][0])
+            key=lambda f: (f['bbox'][1], f['bbox'][0])  # Sort by y, then x
         )
         
         processed_lines = []
@@ -211,10 +379,10 @@ class ImageExtractor:
                 processed_lines, fig_idx
             )
             
-            if inserted:
+            if isinstance(inserted, int):
                 fig_idx = inserted
         
-        # Chèn các ảnh còn lại vào câu hỏi
+        # Chèn các ảnh còn lại
         processed_lines = self._insert_remaining_figures(
             processed_lines, figures_sorted, used_figures, fig_idx
         )
@@ -224,43 +392,48 @@ class ImageExtractor:
     def _preprocess_text_lines(self, text):
         """Tiền xử lý văn bản thành các dòng"""
         lines = []
-        buffer = ""
+        current_line = ""
         
         for line in text.split('\n'):
-            stripped_line = line.strip()
-            if stripped_line:
-                buffer = buffer + " " + stripped_line if buffer else stripped_line
+            stripped = line.strip()
+            if stripped:
+                if current_line:
+                    current_line += " " + stripped
+                else:
+                    current_line = stripped
             else:
-                if buffer:
-                    lines.append(buffer)
-                    buffer = ""
-                lines.append('')
+                if current_line:
+                    lines.append(current_line)
+                    current_line = ""
+                if lines:  # Chỉ thêm dòng trống nếu đã có content
+                    lines.append('')
         
-        if buffer:
-            lines.append(buffer)
+        if current_line:
+            lines.append(current_line)
         
         return lines
     
     def _try_insert_figure(self, line, figures_sorted, used_figures, processed_lines, fig_idx):
-        """Thử chèn ảnh/bảng dựa trên từ khóa"""
+        """Thử chèn ảnh/bảng dựa trên từ khóa cải thiện"""
         lower_line = line.lower()
         
-        # Từ khóa cho bảng
+        # Từ khóa cho bảng (mở rộng)
         table_keywords = [
-            "bảng", "bảng giá trị", "bảng biến thiên", 
-            "bảng tần số", "bảng số liệu", "table"
+            "bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số", 
+            "bảng số liệu", "table", "cho bảng", "theo bảng", "bảng sau",
+            "quan sát bảng", "từ bảng", "dựa vào bảng"
         ]
         
-        # Từ khóa cho hình
+        # Từ khóa cho hình (mở rộng)  
         image_keywords = [
-            "hình vẽ", "hình bên", "(hình", "xem hình", 
-            "đồ thị", "biểu đồ", "minh họa", "hình", "figure", "chart"
+            "hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", 
+            "biểu đồ", "minh họa", "hình", "figure", "chart", "graph",
+            "cho hình", "theo hình", "hình sau", "quan sát hình",
+            "từ hình", "dựa vào hình", "sơ đồ"
         ]
         
-        # Kiểm tra và chèn bảng
-        if (any(keyword in lower_line for keyword in table_keywords) or 
-            (line.strip().startswith("|") and "|" in line)):
-            
+        # Kiểm tra bảng trước
+        if any(keyword in lower_line for keyword in table_keywords):
             for j in range(fig_idx, len(figures_sorted)):
                 fig = figures_sorted[j]
                 if fig['is_table'] and fig['name'] not in used_figures:
@@ -269,7 +442,7 @@ class ImageExtractor:
                     used_figures.add(fig['name'])
                     return j + 1
         
-        # Kiểm tra và chèn hình
+        # Kiểm tra hình ảnh
         elif any(keyword in lower_line for keyword in image_keywords):
             for j in range(fig_idx, len(figures_sorted)):
                 fig = figures_sorted[j]
@@ -282,14 +455,26 @@ class ImageExtractor:
         return fig_idx
     
     def _insert_remaining_figures(self, processed_lines, figures_sorted, used_figures, fig_idx):
-        """Chèn các ảnh còn lại vào đầu các câu hỏi"""
+        """Chèn các ảnh còn lại vào đầu câu hỏi"""
+        # Pattern để nhận diện câu hỏi
+        question_patterns = [
+            r"^(Câu|Question|Problem)\s*\d+",
+            r"^\d+[\.\)]\s*",
+            r"^[A-D][\.\)]\s*",
+            r"^[a-d][\.\)]\s*"
+        ]
+        
         for i, line in enumerate(processed_lines):
-            if re.match(r"^(Câu|Question|Problem)\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
+            # Kiểm tra xem có phải đầu câu hỏi không
+            is_question = any(re.match(pattern, line.strip()) for pattern in question_patterns)
+            
+            if is_question and fig_idx < len(figures_sorted):
+                # Kiểm tra dòng tiếp theo đã có ảnh chưa
                 next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
+                has_image = re.match(r"\[(HÌNH|BẢNG):.*\]", next_line.strip())
                 
-                if (not re.match(r"\[HÌNH:.*\]", next_line) and 
-                    not re.match(r"\[BẢNG:.*\]", next_line)):
-                    
+                if not has_image:
+                    # Tìm ảnh chưa sử dụng
                     while (fig_idx < len(figures_sorted) and 
                            figures_sorted[fig_idx]['name'] in used_figures):
                         fig_idx += 1
@@ -317,7 +502,6 @@ class GeminiAPI:
         """Chuyển đổi nội dung sang LaTeX sử dụng Gemini API"""
         headers = {"Content-Type": "application/json"}
         
-        # Tạo payload cho API
         if content_type.startswith('image/'):
             mime_type = content_type
         else:
@@ -385,7 +569,7 @@ class PDFProcessor:
         
         for page_num in range(pdf_document.page_count):
             page = pdf_document[page_num]
-            mat = fitz.Matrix(2.0, 2.0)
+            mat = fitz.Matrix(2.5, 2.5)  # Tăng độ phân giải
             pix = page.get_pixmap(matrix=mat)
             img_data = pix.tobytes("png")
             img = Image.open(io.BytesIO(img_data))
@@ -405,7 +589,7 @@ class WordExporter:
         title.alignment = 1
         
         # Thêm thông tin
-        doc.add_paragraph(f"Được tạo bởi PDF/Image to LaTeX Converter")
+        doc.add_paragraph(f"Được tạo bởi PDF/Image to LaTeX Converter Enhanced")
         doc.add_paragraph(f"Thời gian: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         doc.add_paragraph("")
         
@@ -435,7 +619,7 @@ class WordExporter:
                 continue
             
             # Xử lý các công thức LaTeX
-            if '$$' in line:
+            if '$$' in line or '$' in line:
                 p = doc.add_paragraph()
                 
                 # Xử lý display equations ($$...$$) trước
@@ -503,7 +687,6 @@ class WordExporter:
                 except Exception:
                     doc.add_paragraph(f"[Lỗi hiển thị hình {i+1}]")
         
-        # Lưu document vào buffer
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
@@ -516,7 +699,6 @@ class WordExporter:
             doc.add_paragraph(f"[{caption_prefix}: {img_name} - Không tìm thấy]")
             return
         
-        # Tìm ảnh trong danh sách đã tách
         target_figure = None
         for fig in extracted_figures:
             if fig['name'] == img_name:
@@ -528,10 +710,8 @@ class WordExporter:
             return
         
         try:
-            # Thêm heading
             doc.add_heading(f"{caption_prefix}: {img_name}", level=3)
             
-            # Decode base64 và chèn ảnh
             img_data = base64.b64decode(target_figure['base64'])
             img_pil = Image.open(io.BytesIO(img_data))
             
@@ -541,8 +721,7 @@ class WordExporter:
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                 img_pil.save(tmp.name, 'PNG')
                 try:
-                    # Tính kích thước phù hợp
-                    max_width = doc.sections[0].page_width * 0.7
+                    max_width = doc.sections[0].page_width * 0.8
                     doc.add_picture(tmp.name, width=max_width)
                 except Exception:
                     doc.add_paragraph(f"[Không thể hiển thị {img_name}]")
@@ -571,7 +750,7 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} {size_names[i]}"
 
 def main():
-    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter + Auto Image Extract</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter - Enhanced</h1>', unsafe_allow_html=True)
     
     # Sidebar cho API key
     with st.sidebar:
@@ -591,16 +770,21 @@ def main():
         
         st.markdown("---")
         
-        # Cài đặt tách ảnh
-        st.subheader("🖼️ Tách ảnh tự động")
+        # Cài đặt tách ảnh nâng cao
+        st.subheader("🖼️ Tách ảnh nâng cao")
         enable_extraction = st.checkbox("Bật tách ảnh/bảng tự động", value=True, 
                                        help="Tự động tách và chèn ảnh/bảng vào đúng vị trí")
         
         if enable_extraction:
-            min_area = st.slider("Diện tích tối thiểu (%)", 0.1, 2.0, 0.8, 0.1,
+            st.write("**Cài đặt nâng cao:**")
+            min_area = st.slider("Diện tích tối thiểu (%)", 0.1, 3.0, 0.5, 0.1,
                                help="% diện tích ảnh gốc") / 100
-            max_figures = st.slider("Số ảnh tối đa", 1, 15, 8, 1)
-            min_size = st.slider("Kích thước tối thiểu (px)", 30, 150, 70, 10)
+            max_figures = st.slider("Số ảnh tối đa", 1, 20, 10, 1)
+            min_size = st.slider("Kích thước tối thiểu (px)", 30, 200, 50, 10)
+            padding = st.slider("Padding xung quanh (px)", 0, 20, 5, 1)
+            
+            show_debug = st.checkbox("Hiển thị ảnh debug", value=True,
+                                   help="Hiển thị ảnh với các vùng đã phát hiện")
         
         st.markdown("---")
         st.markdown("""
@@ -610,10 +794,29 @@ def main():
         3. Upload file
         4. Chờ xử lý và tải file Word
         
-        ### 🎯 Tính năng mới:
-        - ✅ Tự động tách ảnh/bảng
-        - ✅ Chèn đúng vị trí dựa trên từ khóa
-        - ✅ Phân biệt hình minh họa và bảng số liệu
+        ### 🎯 Tính năng nâng cao:
+        - ✅ Thuật toán cắt ảnh cải tiến
+        - ✅ Hiển thị ảnh cắt với kích thước lớn
+        - ✅ Định dạng chuẩn cho câu hỏi
+        - ✅ Debug mode với confidence score
+        
+        ### 📝 Định dạng hỗ trợ:
+        **Trắc nghiệm 4 phương án:**
+        ```
+        Câu X: [nội dung]
+        A. [Đáp án]
+        B. [Đáp án]  
+        C. [Đáp án]
+        D. [Đáp án]
+        ```
+        
+        **Trắc nghiệm đúng sai:**
+        ```
+        a) [Đáp án]
+        b) [Đáp án]
+        c) [Đáp án]
+        d) [Đáp án]
+        ```
         
         ### 🔑 Lấy API Key:
         [Google AI Studio](https://makersuite.google.com/app/apikey)
@@ -629,24 +832,25 @@ def main():
         return
     
     # Tạo tabs
-    tab1, tab2 = st.tabs(["📄 PDF to LaTeX + Auto Extract", "🖼️ Image to LaTeX + Auto Extract"])
+    tab1, tab2 = st.tabs(["📄 PDF to LaTeX + Enhanced Extract", "🖼️ Image to LaTeX + Enhanced Extract"])
     
     # Khởi tạo API và ImageExtractor
     try:
         gemini_api = GeminiAPI(api_key)
         if enable_extraction:
-            image_extractor = ImageExtractor()
+            image_extractor = AdvancedImageExtractor()
             image_extractor.min_area_ratio = min_area
             image_extractor.max_figures = max_figures
             image_extractor.min_width = min_size
             image_extractor.min_height = min_size
+            image_extractor.padding = padding
     except Exception as e:
         st.error(f"❌ Lỗi khởi tạo: {str(e)}")
         return
     
     # Tab xử lý PDF
     with tab1:
-        st.header("📄 Chuyển đổi PDF sang LaTeX + Tách ảnh tự động")
+        st.header("📄 Chuyển đổi PDF sang LaTeX + Tách ảnh nâng cao")
         
         uploaded_pdf = st.file_uploader(
             "Chọn file PDF",
@@ -668,12 +872,12 @@ def main():
                         st.success(f"✅ Đã trích xuất {len(pdf_images)} trang")
                         
                         # Hiển thị preview
-                        for img, page_num in pdf_images[:3]:
+                        for img, page_num in pdf_images[:2]:
                             st.write(f"**Trang {page_num}:**")
                             st.image(img, use_column_width=True)
                         
-                        if len(pdf_images) > 3:
-                            st.info(f"... và {len(pdf_images) - 3} trang khác")
+                        if len(pdf_images) > 2:
+                            st.info(f"... và {len(pdf_images) - 2} trang khác")
                     
                     except Exception as e:
                         st.error(f"❌ Lỗi xử lý PDF: {str(e)}")
@@ -682,10 +886,11 @@ def main():
             with col2:
                 st.subheader("⚡ Chuyển đổi sang LaTeX")
                 
-                if st.button("🚀 Bắt đầu chuyển đổi PDF + Tách ảnh", key="convert_pdf"):
+                if st.button("🚀 Bắt đầu chuyển đổi PDF + Tách ảnh nâng cao", key="convert_pdf"):
                     if pdf_images:
                         all_latex_content = []
                         all_extracted_figures = []
+                        all_debug_images = []
                         
                         progress_bar = st.progress(0)
                         status_text = st.empty()
@@ -705,27 +910,58 @@ def main():
                                     figures, h, w = image_extractor.extract_figures_and_tables(img_bytes)
                                     extracted_figures = figures
                                     all_extracted_figures.extend(figures)
+                                    
+                                    # Tạo ảnh debug
+                                    if show_debug and figures:
+                                        debug_img = image_extractor.create_debug_image(img_bytes, figures)
+                                        all_debug_images.append((debug_img, page_num, figures))
+                                    
                                     st.write(f"🖼️ Trang {page_num}: Tách được {len(figures)} ảnh/bảng")
+                                    
                                 except Exception as e:
                                     st.warning(f"⚠️ Không thể tách ảnh trang {page_num}: {str(e)}")
                             
-                            # Tạo prompt cho Gemini
+                            # Tạo prompt cải tiến cho Gemini
                             prompt = f"""
-Hãy chuyển đổi tất cả nội dung trong ảnh trang {page_num} thành định dạng LaTeX chính xác.
+Hãy chuyển đổi TẤT CẢ nội dung trong ảnh trang {page_num} thành định dạng LaTeX chính xác với cấu trúc chuẩn.
 
-YÊU CẦU:
-1. Sử dụng ${{...}}$ cho công thức inline
-2. Sử dụng $${{...}}$$ cho công thức display
-3. Giữ CHÍNH XÁC thứ tự và cấu trúc nội dung
-4. Bao gồm TẤT CẢ text và công thức toán học
-5. Sử dụng ký hiệu LaTeX chuẩn
+YÊU CẦU ĐỊNH DẠNG:
 
-{'6. Khi gặp hình ảnh/bảng, sử dụng từ khóa như "xem hình", "bảng sau", "biểu đồ", "đồ thị"' if enable_extraction else ''}
+1. **Trắc nghiệm 4 phương án:**
+```
+Câu X: [nội dung câu hỏi]
+A. [đáp án A]
+B. [đáp án B]  
+C. [đáp án C]
+D. [đáp án D]
+```
 
-ĐỊNH DẠNG OUTPUT:
-- Text: viết bình thường
+2. **Trắc nghiệm đúng sai:**
+```
+a) [nội dung đáp án a]
+b) [nội dung đáp án b]
+c) [nội dung đáp án c]
+d) [nội dung đáp án d]
+```
+
+3. **Trả lời ngắn/Tự luận:**
+```
+Câu X: [nội dung câu hỏi]
+```
+
+4. **Công thức toán học:**
 - Inline: ${{x^2 + y^2}}$
 - Display: $${{\\int_0^1 x dx = \\frac{{1}}{{2}}}}$$
+
+5. **Hình ảnh và bảng:**
+{'- Khi thấy hình ảnh/đồ thị: sử dụng từ khóa "xem hình", "theo hình", "hình sau"' if enable_extraction else ''}
+{'- Khi thấy bảng: sử dụng từ khóa "bảng sau", "theo bảng", "quan sát bảng"' if enable_extraction else ''}
+
+YÊU CẦU KHÁC:
+- Giữ CHÍNH XÁC thứ tự và cấu trúc nội dung
+- Bao gồm TẤT CẢ text và công thức toán học
+- Sử dụng ký hiệu LaTeX chuẩn
+- Đảm bảo định dạng đúng cho từng loại câu hỏi
 """
                             
                             # Gọi API
@@ -752,12 +988,44 @@ YÊU CẦU:
                         combined_latex = "\n".join(all_latex_content)
                         
                         st.markdown('<div class="latex-output">', unsafe_allow_html=True)
-                        st.text_area("📝 Kết quả LaTeX (với ảnh đã tách):", combined_latex, height=300)
+                        st.text_area("📝 Kết quả LaTeX (định dạng chuẩn):", combined_latex, height=300)
                         st.markdown('</div>', unsafe_allow_html=True)
                         
                         # Hiển thị thống kê
                         if enable_extraction:
                             st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} ảnh/bảng")
+                            
+                            # Hiển thị ảnh debug và ảnh đã cắt
+                            if show_debug and all_debug_images:
+                                st.subheader("🔍 Debug - Ảnh đã phát hiện và cắt")
+                                
+                                for debug_img, page_num, figures in all_debug_images:
+                                    st.write(f"**Trang {page_num} - Vùng phát hiện:**")
+                                    st.image(debug_img, caption=f"Đã phát hiện {len(figures)} vùng", use_column_width=True)
+                                    
+                                    # Hiển thị từng ảnh đã cắt với thông tin chi tiết
+                                    if figures:
+                                        cols = st.columns(min(len(figures), 3))
+                                        for idx, fig in enumerate(figures):
+                                            with cols[idx % 3]:
+                                                # Decode và hiển thị ảnh cắt
+                                                img_data = base64.b64decode(fig['base64'])
+                                                img_pil = Image.open(io.BytesIO(img_data))
+                                                
+                                                st.markdown(f'<div class="extracted-image">', unsafe_allow_html=True)
+                                                st.image(img_pil, caption=fig['name'], use_column_width=True)
+                                                
+                                                # Thông tin chi tiết
+                                                st.markdown(f'''
+                                                <div class="image-info">
+                                                <strong>{fig['name']}</strong><br>
+                                                Loại: {"Bảng" if fig['is_table'] else "Hình ảnh"}<br>
+                                                Confidence: {fig['confidence']:.1f}%<br>
+                                                Tỷ lệ: {fig['aspect_ratio']:.2f}<br>
+                                                Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px
+                                                </div>
+                                                ''', unsafe_allow_html=True)
+                                                st.markdown('</div>', unsafe_allow_html=True)
                         
                         # Lưu vào session state
                         st.session_state.pdf_latex_content = combined_latex
@@ -767,7 +1035,7 @@ YÊU CẦU:
                 # Tạo file Word
                 if 'pdf_latex_content' in st.session_state:
                     st.markdown("---")
-                    if st.button("📥 Tạo file Word (với ảnh tự động)", key="create_word_pdf"):
+                    if st.button("📥 Tạo file Word (định dạng chuẩn + ảnh)", key="create_word_pdf"):
                         with st.spinner("🔄 Đang tạo file Word..."):
                             try:
                                 extracted_figs = st.session_state.get('pdf_extracted_figures')
@@ -779,10 +1047,10 @@ YÊU CẦU:
                                     images=original_imgs
                                 )
                                 
-                                filename = f"{uploaded_pdf.name.split('.')[0]}_latex_with_images.docx"
+                                filename = f"{uploaded_pdf.name.split('.')[0]}_enhanced_latex.docx"
                                 
                                 st.download_button(
-                                    label="📥 Tải file Word (có ảnh tự động chèn)",
+                                    label="📥 Tải file Word (Enhanced)",
                                     data=word_buffer.getvalue(),
                                     file_name=filename,
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -795,14 +1063,14 @@ YÊU CẦU:
                                     mime="text/plain"
                                 )
                                 
-                                st.success("✅ File Word với ảnh tự động đã được tạo thành công!")
+                                st.success("✅ File Word với định dạng chuẩn đã được tạo thành công!")
                             
                             except Exception as e:
                                 st.error(f"❌ Lỗi tạo file Word: {str(e)}")
     
-    # Tab xử lý ảnh
+    # Tab xử lý ảnh (tương tự như PDF tab)
     with tab2:
-        st.header("🖼️ Chuyển đổi Ảnh sang LaTeX + Tách ảnh tự động")
+        st.header("🖼️ Chuyển đổi Ảnh sang LaTeX + Tách ảnh nâng cao")
         
         uploaded_images = st.file_uploader(
             "Chọn ảnh (có thể chọn nhiều)",
@@ -821,21 +1089,22 @@ YÊU CẦU:
                 st.info(f"📁 Số ảnh: {len(uploaded_images)}")
                 st.info(f"📏 Tổng kích thước: {format_file_size(total_size)}")
                 
-                for i, uploaded_image in enumerate(uploaded_images[:3]):
+                for i, uploaded_image in enumerate(uploaded_images[:2]):
                     st.write(f"**Ảnh {i+1}: {uploaded_image.name}**")
                     image = Image.open(uploaded_image)
                     st.image(image, use_column_width=True)
                 
-                if len(uploaded_images) > 3:
-                    st.info(f"... và {len(uploaded_images) - 3} ảnh khác")
+                if len(uploaded_images) > 2:
+                    st.info(f"... và {len(uploaded_images) - 2} ảnh khác")
             
             with col2:
                 st.subheader("⚡ Chuyển đổi sang LaTeX")
                 
-                if st.button("🚀 Bắt đầu chuyển đổi ảnh + Tách ảnh", key="convert_images"):
+                if st.button("🚀 Bắt đầu chuyển đổi ảnh + Tách ảnh nâng cao", key="convert_images"):
                     all_latex_content = []
                     all_extracted_figures = []
                     all_original_images = []
+                    all_debug_images = []
                     
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -854,19 +1123,52 @@ YÊU CẦU:
                                 figures, h, w = image_extractor.extract_figures_and_tables(image_bytes)
                                 extracted_figures = figures
                                 all_extracted_figures.extend(figures)
+                                
+                                # Tạo ảnh debug
+                                if show_debug and figures:
+                                    debug_img = image_extractor.create_debug_image(image_bytes, figures)
+                                    all_debug_images.append((debug_img, uploaded_image.name, figures))
+                                
                                 st.write(f"🖼️ {uploaded_image.name}: Tách được {len(figures)} ảnh/bảng")
                             except Exception as e:
                                 st.warning(f"⚠️ Không thể tách ảnh {uploaded_image.name}: {str(e)}")
                         
                         prompt = """
-Chuyển đổi tất cả nội dung trong ảnh thành định dạng LaTeX chính xác.
+Chuyển đổi TẤT CẢ nội dung trong ảnh thành định dạng LaTeX chính xác với cấu trúc chuẩn.
 
-YÊU CẦU:
-1. Sử dụng ${...}$ cho công thức inline
-2. Sử dụng $${...}$$ cho công thức display  
-3. Giữ CHÍNH XÁC thứ tự và cấu trúc nội dung
-4. Bao gồm TẤT CẢ text và công thức toán học
-5. Sử dụng ký hiệu LaTeX chuẩn
+YÊU CẦU ĐỊNH DẠNG:
+
+1. **Trắc nghiệm 4 phương án:**
+```
+Câu X: [nội dung câu hỏi]
+A. [đáp án A]
+B. [đáp án B]  
+C. [đáp án C]
+D. [đáp án D]
+```
+
+2. **Trắc nghiệm đúng sai:**
+```
+a) [nội dung đáp án a]
+b) [nội dung đáp án b]
+c) [nội dung đáp án c]
+d) [nội dung đáp án d]
+```
+
+3. **Trả lời ngắn/Tự luận:**
+```
+Câu X: [nội dung câu hỏi]
+```
+
+4. **Công thức toán học:**
+- Inline: ${x^2 + y^2}$
+- Display: $${\\int_0^1 x dx = \\frac{1}{2}}$$
+
+YÊU CẦU KHÁC:
+- Giữ CHÍNH XÁC thứ tự và cấu trúc nội dung
+- Bao gồm TẤT CẢ text và công thức toán học
+- Sử dụng ký hiệu LaTeX chuẩn
+- Đảm bảo định dạng đúng cho từng loại câu hỏi
 """
                         
                         try:
@@ -896,12 +1198,40 @@ YÊU CẦU:
                     combined_latex = "\n".join(all_latex_content)
                     
                     st.markdown('<div class="latex-output">', unsafe_allow_html=True)
-                    st.text_area("📝 Kết quả LaTeX (với ảnh đã tách):", combined_latex, height=300)
+                    st.text_area("📝 Kết quả LaTeX (định dạng chuẩn):", combined_latex, height=300)
                     st.markdown('</div>', unsafe_allow_html=True)
                     
-                    # Hiển thị thống kê
+                    # Hiển thị thống kê và ảnh debug
                     if enable_extraction:
                         st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} ảnh/bảng")
+                        
+                        if show_debug and all_debug_images:
+                            st.subheader("🔍 Debug - Ảnh đã phát hiện và cắt")
+                            
+                            for debug_img, img_name, figures in all_debug_images:
+                                st.write(f"**{img_name} - Vùng phát hiện:**")
+                                st.image(debug_img, caption=f"Đã phát hiện {len(figures)} vùng", use_column_width=True)
+                                
+                                if figures:
+                                    cols = st.columns(min(len(figures), 3))
+                                    for idx, fig in enumerate(figures):
+                                        with cols[idx % 3]:
+                                            img_data = base64.b64decode(fig['base64'])
+                                            img_pil = Image.open(io.BytesIO(img_data))
+                                            
+                                            st.markdown(f'<div class="extracted-image">', unsafe_allow_html=True)
+                                            st.image(img_pil, caption=fig['name'], use_column_width=True)
+                                            
+                                            st.markdown(f'''
+                                            <div class="image-info">
+                                            <strong>{fig['name']}</strong><br>
+                                            Loại: {"Bảng" if fig['is_table'] else "Hình ảnh"}<br>
+                                            Confidence: {fig['confidence']:.1f}%<br>
+                                            Tỷ lệ: {fig['aspect_ratio']:.2f}<br>
+                                            Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px
+                                            </div>
+                                            ''', unsafe_allow_html=True)
+                                            st.markdown('</div>', unsafe_allow_html=True)
                     
                     # Lưu vào session
                     st.session_state.image_latex_content = combined_latex
@@ -911,7 +1241,7 @@ YÊU CẦU:
                 # Tạo file Word
                 if 'image_latex_content' in st.session_state:
                     st.markdown("---")
-                    if st.button("📥 Tạo file Word (với ảnh tự động)", key="create_word_images"):
+                    if st.button("📥 Tạo file Word (định dạng chuẩn + ảnh)", key="create_word_images"):
                         with st.spinner("🔄 Đang tạo file Word..."):
                             try:
                                 extracted_figs = st.session_state.get('image_extracted_figures')
@@ -924,9 +1254,9 @@ YÊU CẦU:
                                 )
                                 
                                 st.download_button(
-                                    label="📥 Tải file Word (có ảnh tự động chèn)",
+                                    label="📥 Tải file Word (Enhanced)",
                                     data=word_buffer.getvalue(),
-                                    file_name="images_latex_with_extracted.docx",
+                                    file_name="images_enhanced_latex.docx",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                                 )
                                 
@@ -937,7 +1267,7 @@ YÊU CẦU:
                                     mime="text/plain"
                                 )
                                 
-                                st.success("✅ File Word với ảnh tự động đã được tạo thành công!")
+                                st.success("✅ File Word với định dạng chuẩn đã được tạo thành công!")
                             
                             except Exception as e:
                                 st.error(f"❌ Lỗi tạo file Word: {str(e)}")
@@ -947,8 +1277,8 @@ YÊU CẦU:
     st.markdown("""
     <div style='text-align: center; color: #666;'>
         <p>Được phát triển với ❤️ sử dụng Streamlit và Gemini 2.0 API</p>
-        <p>✨ <strong>Tính năng mới:</strong> Tự động tách ảnh/bảng và chèn đúng vị trí!</p>
-        <p>🎯 Hỗ trợ chuyển đổi PDF và ảnh sang LaTeX với độ chính xác cao + AI tách ảnh thông minh</p>
+        <p>✨ <strong>Enhanced Version:</strong> Thuật toán cắt ảnh cải tiến + Định dạng chuẩn!</p>
+        <p>🎯 Hỗ trợ đầy đủ: Trắc nghiệm 4 phương án, Đúng/Sai, Tự luận + AI tách ảnh thông minh</p>
     </div>
     """, unsafe_allow_html=True)
 
