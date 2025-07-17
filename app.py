@@ -6,7 +6,10 @@ import json
 from PIL import Image, ImageDraw
 import fitz  # PyMuPDF
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Inches
+from docx.oxml.shared import OxmlElement, qn
+from docx.oxml.ns import nsdecls
+from docx.oxml import parse_xml
 import tempfile
 import os
 import re
@@ -21,7 +24,7 @@ except ImportError:
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/Image to LaTeX Converter - Final",
+    page_title="PDF/Image to LaTeX Converter - Improved",
     page_icon="📝",
     layout="wide"
 )
@@ -189,7 +192,8 @@ class SmartImageExtractor:
                     "aspect_ratio": aspect_ratio,
                     "solidity": solidity,
                     "extent": extent,
-                    "bbox": (x, y, ww, hh)
+                    "bbox": (x, y, ww, hh),
+                    "center_y": y + hh // 2  # Thêm tọa độ trung tâm Y
                 })
         
         # Sắp xếp và lọc
@@ -243,7 +247,9 @@ class SmartImageExtractor:
                 "aspect_ratio": fig_data["aspect_ratio"],
                 "area": fig_data["area"],
                 "solidity": fig_data["solidity"],
-                "extent": fig_data["extent"]
+                "extent": fig_data["extent"],
+                "center_y": fig_data["center_y"],  # Thêm tọa độ trung tâm Y
+                "y_position": fig_data["y0"]  # Thêm vị trí Y để sắp xếp
             })
         
         return final_figures, h, w
@@ -355,72 +361,57 @@ class SmartImageExtractor:
         
         return crop
     
-    def insert_figures_into_text(self, text, figures, img_h, img_w):
-        """Chèn ảnh vào văn bản"""
+    def insert_figures_into_text_by_position(self, text, figures, img_h, img_w):
+        """Chèn ảnh vào văn bản dựa trên vị trí thực tế"""
+        if not figures:
+            return text
+        
         lines = text.split('\n')
-        processed_lines = []
-        used_figures = set()
-        fig_idx = 0
         
-        # Từ khóa mở rộng
-        table_keywords = [
-            "bảng", "table", "theo bảng", "bảng sau", "quan sát bảng",
-            "từ bảng", "dựa vào bảng", "bảng trên", "trong bảng", "xem bảng"
-        ]
-        image_keywords = [
-            "hình", "figure", "đồ thị", "biểu đồ", "theo hình", "hình sau",
-            "quan sát hình", "từ hình", "dựa vào hình", "sơ đồ", "hình trên",
-            "trong hình", "xem hình", "minh họa"
-        ]
+        # Ước tính vị trí các dòng text trong ảnh
+        line_positions = []
+        estimated_line_height = img_h / max(len([line for line in lines if line.strip()]), 1)
         
-        for line in lines:
-            processed_lines.append(line)
-            lower_line = line.lower()
+        current_y = 0
+        for i, line in enumerate(lines):
+            if line.strip():  # Chỉ tính các dòng có nội dung
+                line_positions.append({
+                    'index': i,
+                    'y_position': current_y,
+                    'content': line.strip()
+                })
+                current_y += estimated_line_height
+        
+        # Sắp xếp figures theo vị trí Y
+        sorted_figures = sorted(figures, key=lambda f: f['y_position'])
+        
+        # Chèn ảnh vào vị trí phù hợp
+        result_lines = lines[:]
+        inserted_count = 0
+        
+        for fig in sorted_figures:
+            fig_y = fig['y_position']
             
-            # Kiểm tra từ khóa bảng trước
-            if any(keyword in lower_line for keyword in table_keywords):
-                for j in range(fig_idx, len(figures)):
-                    fig = figures[j]
-                    if fig['is_table'] and fig['name'] not in used_figures:
-                        processed_lines.append(f"\n[BẢNG: {fig['name']}]\n")
-                        used_figures.add(fig['name'])
-                        fig_idx = j + 1
-                        break
+            # Tìm dòng phù hợp để chèn ảnh
+            best_line_index = 0
+            min_distance = float('inf')
             
-            # Kiểm tra từ khóa hình
-            elif any(keyword in lower_line for keyword in image_keywords):
-                for j in range(fig_idx, len(figures)):
-                    fig = figures[j]
-                    if not fig['is_table'] and fig['name'] not in used_figures:
-                        processed_lines.append(f"\n[HÌNH: {fig['name']}]\n")
-                        used_figures.add(fig['name'])
-                        fig_idx = j + 1
-                        break
+            for line_info in line_positions:
+                distance = abs(line_info['y_position'] - fig_y)
+                if distance < min_distance:
+                    min_distance = distance
+                    best_line_index = line_info['index']
+            
+            # Chèn ảnh sau dòng được chọn
+            insertion_index = best_line_index + 1 + inserted_count
+            
+            # Đảm bảo không vượt quá độ dài danh sách
+            if insertion_index <= len(result_lines):
+                tag = f"\n[BẢNG: {fig['name']}]\n" if fig['is_table'] else f"\n[HÌNH: {fig['name']}]\n"
+                result_lines.insert(insertion_index, tag)
+                inserted_count += 1
         
-        # Chèn ảnh còn lại vào đầu câu hỏi
-        question_patterns = [
-            r"^(Câu|Question|Problem)\s*\d+",
-            r"^\d+[\.\)]\s*",
-            r"^[A-D][\.\)]\s*",
-            r"^[a-d][\.\)]\s*"
-        ]
-        
-        for i, line in enumerate(processed_lines):
-            if any(re.match(pattern, line.strip()) for pattern in question_patterns):
-                if fig_idx < len(figures):
-                    next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
-                    if not re.match(r"\[(HÌNH|BẢNG):.*\]", next_line.strip()):
-                        while fig_idx < len(figures) and figures[fig_idx]['name'] in used_figures:
-                            fig_idx += 1
-                        
-                        if fig_idx < len(figures):
-                            fig = figures[fig_idx]
-                            tag = f"\n[BẢNG: {fig['name']}]\n" if fig['is_table'] else f"\n[HÌNH: {fig['name']}]\n"
-                            processed_lines.insert(i+1, tag)
-                            used_figures.add(fig['name'])
-                            fig_idx += 1
-        
-        return '\n'.join(processed_lines)
+        return '\n'.join(result_lines)
     
     def create_debug_image(self, image_bytes, figures):
         """Tạo ảnh debug"""
@@ -441,7 +432,7 @@ class SmartImageExtractor:
             # Vẽ label
             conf_class = "HIGH" if fig['confidence'] > 80 else "MED" if fig['confidence'] > 60 else "LOW"
             type_label = "TBL" if fig['is_table'] else "IMG"
-            label = f"{fig['name']}\n{type_label}-{conf_class}: {fig['confidence']:.0f}%\nAR: {fig['aspect_ratio']:.2f}"
+            label = f"{fig['name']}\n{type_label}-{conf_class}: {fig['confidence']:.0f}%\nY: {fig['y_position']}\nAR: {fig['aspect_ratio']:.2f}"
             
             # Vẽ background cho text
             lines = label.split('\n')
@@ -583,53 +574,9 @@ class WordExporter:
             if not line:
                 continue
             
-            # Xử lý công thức toán học
+            # Xử lý công thức toán học với Word Equation
             if '${' in line and '}$' in line:
-                p = doc.add_paragraph()
-                
-                # Parsing an toàn
-                parts = []
-                temp_line = line
-                
-                while '${' in temp_line and '}$' in temp_line:
-                    start_pos = temp_line.find('${')
-                    if start_pos == -1:
-                        break
-                    
-                    end_pos = temp_line.find('}$', start_pos + 2)
-                    if end_pos == -1:
-                        break
-                    
-                    # Thêm text trước công thức
-                    if start_pos > 0:
-                        parts.append(('text', temp_line[:start_pos]))
-                    
-                    # Thêm công thức
-                    equation = temp_line[start_pos+2:end_pos]
-                    parts.append(('equation', equation))
-                    
-                    # Cập nhật temp_line
-                    temp_line = temp_line[end_pos+2:]
-                
-                # Thêm phần còn lại
-                if temp_line:
-                    parts.append(('text', temp_line))
-                
-                # Render
-                for part_type, content in parts:
-                    if part_type == 'text' and content.strip():
-                        run = p.add_run(content)
-                        run.font.name = 'Times New Roman'
-                        run.font.size = Pt(12)
-                    elif part_type == 'equation':
-                        equation_text = WordExporter._process_latex_symbols(content)
-                        
-                        eq_run = p.add_run(f" {equation_text} ")
-                        eq_run.font.name = 'Cambria Math'
-                        eq_run.font.size = Pt(12)
-                        eq_run.font.italic = True
-                        eq_run.font.bold = False
-                        eq_run.font.color.rgb = RGBColor(0, 0, 139)
+                WordExporter._process_line_with_equations(doc, line)
             else:
                 # Đoạn văn bình thường
                 p = doc.add_paragraph(line)
@@ -665,175 +612,253 @@ class WordExporter:
         return buffer
     
     @staticmethod
+    def _process_line_with_equations(doc, line):
+        """Xử lý dòng có chứa equation và chuyển thành Word equation object"""
+        p = doc.add_paragraph()
+        
+        # Parsing an toàn
+        temp_line = line
+        
+        while '${' in temp_line and '}$' in temp_line:
+            start_pos = temp_line.find('${')
+            if start_pos == -1:
+                break
+            
+            end_pos = temp_line.find('}$', start_pos + 2)
+            if end_pos == -1:
+                break
+            
+            # Thêm text trước công thức
+            if start_pos > 0:
+                text_before = temp_line[:start_pos]
+                if text_before.strip():
+                    run = p.add_run(text_before)
+                    run.font.name = 'Times New Roman'
+                    run.font.size = Pt(12)
+            
+            # Thêm equation
+            equation_latex = temp_line[start_pos+2:end_pos]
+            WordExporter._add_equation_to_paragraph(p, equation_latex)
+            
+            # Cập nhật temp_line
+            temp_line = temp_line[end_pos+2:]
+        
+        # Thêm phần còn lại
+        if temp_line.strip():
+            run = p.add_run(temp_line)
+            run.font.name = 'Times New Roman'
+            run.font.size = Pt(12)
+    
+    @staticmethod
+    def _add_equation_to_paragraph(paragraph, latex_equation):
+        """Thêm Word equation object vào paragraph"""
+        try:
+            # Chuyển LaTeX thành OMML (Office Math Markup Language)
+            omml_equation = WordExporter._latex_to_omml(latex_equation)
+            
+            # Thêm equation vào paragraph
+            run = paragraph.add_run()
+            run._element.append(omml_equation)
+            
+        except Exception as e:
+            # Fallback về Unicode nếu không tạo được equation
+            equation_text = WordExporter._process_latex_symbols(latex_equation)
+            run = paragraph.add_run(f" {equation_text} ")
+            run.font.name = 'Cambria Math'
+            run.font.size = Pt(12)
+            run.font.italic = True
+            run.font.color.rgb = RGBColor(0, 0, 139)
+    
+    @staticmethod
+    def _latex_to_omml(latex_text):
+        """Chuyển đổi LaTeX thành OMML cho Word equation"""
+        # Làm sạch LaTeX
+        latex_text = latex_text.strip()
+        
+        # Xử lý các phần tử cơ bản
+        omml_content = WordExporter._convert_latex_elements(latex_text)
+        
+        # Tạo OMML structure
+        omml = f"""
+        <m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+            {omml_content}
+        </m:oMath>
+        """
+        
+        return parse_xml(omml)
+    
+    @staticmethod
+    def _convert_latex_elements(latex_text):
+        """Chuyển đổi các phần tử LaTeX thành OMML"""
+        result = ""
+        i = 0
+        
+        while i < len(latex_text):
+            if latex_text[i:i+5] == '\\frac':
+                # Xử lý phân số
+                frac_result, new_i = WordExporter._process_fraction(latex_text, i)
+                result += frac_result
+                i = new_i
+            elif latex_text[i] == '^':
+                # Xử lý superscript
+                sup_result, new_i = WordExporter._process_superscript(latex_text, i)
+                result += sup_result
+                i = new_i
+            elif latex_text[i] == '_':
+                # Xử lý subscript
+                sub_result, new_i = WordExporter._process_subscript(latex_text, i)
+                result += sub_result
+                i = new_i
+            elif latex_text[i] == '\\':
+                # Xử lý ký hiệu LaTeX
+                symbol_result, new_i = WordExporter._process_latex_symbol(latex_text, i)
+                result += symbol_result
+                i = new_i
+            else:
+                # Ký tự thường
+                result += f'<m:t>{latex_text[i]}</m:t>'
+                i += 1
+        
+        return result
+    
+    @staticmethod
+    def _process_fraction(latex_text, start_pos):
+        """Xử lý phân số LaTeX"""
+        # Tìm tử số
+        if start_pos + 6 < len(latex_text) and latex_text[start_pos + 5] == '{':
+            num_start = start_pos + 6
+            num_end, brace_count = WordExporter._find_matching_brace(latex_text, num_start)
+            
+            if num_end != -1:
+                numerator = latex_text[num_start:num_end]
+                
+                # Tìm mẫu số
+                if num_end + 1 < len(latex_text) and latex_text[num_end + 1] == '{':
+                    den_start = num_end + 2
+                    den_end, brace_count = WordExporter._find_matching_brace(latex_text, den_start)
+                    
+                    if den_end != -1:
+                        denominator = latex_text[den_start:den_end]
+                        
+                        # Tạo OMML fraction
+                        num_omml = WordExporter._convert_latex_elements(numerator)
+                        den_omml = WordExporter._convert_latex_elements(denominator)
+                        
+                        frac_omml = f"""
+                        <m:f>
+                            <m:num>{num_omml}</m:num>
+                            <m:den>{den_omml}</m:den>
+                        </m:f>
+                        """
+                        
+                        return frac_omml, den_end + 1
+        
+        # Fallback
+        return f'<m:t>\\frac</m:t>', start_pos + 5
+    
+    @staticmethod
+    def _process_superscript(latex_text, start_pos):
+        """Xử lý superscript"""
+        if start_pos + 1 < len(latex_text) and latex_text[start_pos + 1] == '{':
+            content_start = start_pos + 2
+            content_end, _ = WordExporter._find_matching_brace(latex_text, content_start)
+            
+            if content_end != -1:
+                content = latex_text[content_start:content_end]
+                content_omml = WordExporter._convert_latex_elements(content)
+                
+                sup_omml = f"""
+                <m:sSup>
+                    <m:e><m:t></m:t></m:e>
+                    <m:sup>{content_omml}</m:sup>
+                </m:sSup>
+                """
+                
+                return sup_omml, content_end + 1
+        
+        return f'<m:t>^</m:t>', start_pos + 1
+    
+    @staticmethod
+    def _process_subscript(latex_text, start_pos):
+        """Xử lý subscript"""
+        if start_pos + 1 < len(latex_text) and latex_text[start_pos + 1] == '{':
+            content_start = start_pos + 2
+            content_end, _ = WordExporter._find_matching_brace(latex_text, content_start)
+            
+            if content_end != -1:
+                content = latex_text[content_start:content_end]
+                content_omml = WordExporter._convert_latex_elements(content)
+                
+                sub_omml = f"""
+                <m:sSub>
+                    <m:e><m:t></m:t></m:e>
+                    <m:sub>{content_omml}</m:sub>
+                </m:sSub>
+                """
+                
+                return sub_omml, content_end + 1
+        
+        return f'<m:t>_</m:t>', start_pos + 1
+    
+    @staticmethod
+    def _process_latex_symbol(latex_text, start_pos):
+        """Xử lý ký hiệu LaTeX"""
+        # Dictionary mapping LaTeX symbols to Unicode
+        latex_symbols = {
+            '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
+            '\\epsilon': 'ε', '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ',
+            '\\pi': 'π', '\\sigma': 'σ', '\\phi': 'φ', '\\omega': 'ω',
+            '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ', '\\Sigma': 'Σ',
+            '\\Phi': 'Φ', '\\Omega': 'Ω', '\\infty': '∞', '\\pm': '±',
+            '\\leq': '≤', '\\geq': '≥', '\\neq': '≠', '\\approx': '≈',
+            '\\equiv': '≡', '\\times': '×', '\\div': '÷', '\\sqrt': '√',
+            '\\sum': '∑', '\\prod': '∏', '\\int': '∫', '\\perp': '⊥',
+            '\\parallel': '∥', '\\angle': '∠', '\\degree': '°'
+        }
+        
+        # Tìm symbol dài nhất
+        for symbol in sorted(latex_symbols.keys(), key=len, reverse=True):
+            if latex_text[start_pos:].startswith(symbol):
+                unicode_char = latex_symbols[symbol]
+                return f'<m:t>{unicode_char}</m:t>', start_pos + len(symbol)
+        
+        # Nếu không tìm thấy, trả về ký tự \
+        return f'<m:t>\\</m:t>', start_pos + 1
+    
+    @staticmethod
+    def _find_matching_brace(text, start_pos):
+        """Tìm dấu ngoặc đóng tương ứng"""
+        brace_count = 1
+        i = start_pos
+        
+        while i < len(text) and brace_count > 0:
+            if text[i] == '{':
+                brace_count += 1
+            elif text[i] == '}':
+                brace_count -= 1
+            i += 1
+        
+        if brace_count == 0:
+            return i - 1, 0
+        else:
+            return -1, brace_count
+    
+    @staticmethod
     def _process_latex_symbols(latex_text):
-        """Chuyển đổi LaTeX thành Unicode"""
+        """Chuyển đổi LaTeX thành Unicode (fallback)"""
         # Dictionary mapping
         latex_to_unicode = {
-            '\\perp': '⊥',
-            '\\parallel': '∥', 
-            '\\angle': '∠',
-            '\\degree': '°',
-            '^\\circ': '°',
-            '\\alpha': 'α',
-            '\\beta': 'β',
-            '\\gamma': 'γ',
-            '\\delta': 'δ',
-            '\\epsilon': 'ε',
-            '\\theta': 'θ',
-            '\\lambda': 'λ',
-            '\\mu': 'μ',
-            '\\pi': 'π',
-            '\\sigma': 'σ',
-            '\\phi': 'φ',
-            '\\omega': 'ω',
-            '\\Delta': 'Δ',
-            '\\Theta': 'Θ',
-            '\\Lambda': 'Λ',
-            '\\Sigma': 'Σ',
-            '\\Phi': 'Φ',
-            '\\Omega': 'Ω',
-            '\\leq': '≤',
-            '\\geq': '≥',
-            '\\neq': '≠',
-            '\\approx': '≈',
-            '\\equiv': '≡',
-            '\\subset': '⊂',
-            '\\supset': '⊃',
-            '\\in': '∈',
-            '\\notin': '∉',
-            '\\cup': '∪',
-            '\\cap': '∩',
-            '\\times': '×',
-            '\\div': '÷',
-            '\\pm': '±',
-            '\\mp': '∓',
-            '\\infty': '∞',
-            '\\sqrt': '√',
-            '\\sum': '∑',
-            '\\prod': '∏',
-            '\\int': '∫',
+            '\\perp': '⊥', '\\parallel': '∥', '\\angle': '∠', '\\degree': '°',
+            '^\\circ': '°', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
+            '\\delta': 'δ', '\\epsilon': 'ε', '\\theta': 'θ', '\\lambda': 'λ',
+            '\\mu': 'μ', '\\pi': 'π', '\\sigma': 'σ', '\\phi': 'φ', '\\omega': 'ω',
+            '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ', '\\Sigma': 'Σ',
+            '\\Phi': 'Φ', '\\Omega': 'Ω', '\\leq': '≤', '\\geq': '≥', '\\neq': '≠',
+            '\\approx': '≈', '\\equiv': '≡', '\\subset': '⊂', '\\supset': '⊃',
+            '\\in': '∈', '\\notin': '∉', '\\cup': '∪', '\\cap': '∩', '\\times': '×',
+            '\\div': '÷', '\\pm': '±', '\\mp': '∓', '\\infty': '∞', '\\sqrt': '√',
+            '\\sum': '∑', '\\prod': '∏', '\\int': '∫',
         }
-        
-        # Xử lý fractions an toàn
-        while '\\frac{' in latex_text:
-            start = latex_text.find('\\frac{')
-            if start == -1:
-                break
-            
-            # Tìm tử số
-            brace_count = 0
-            num_start = start + 6
-            num_end = num_start
-            
-            for i in range(num_start, len(latex_text)):
-                if latex_text[i] == '{':
-                    brace_count += 1
-                elif latex_text[i] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        num_end = i
-                        break
-            
-            if brace_count != 0:
-                break
-            
-            numerator = latex_text[num_start:num_end]
-            
-            # Tìm mẫu số
-            if num_end + 1 < len(latex_text) and latex_text[num_end + 1] == '{':
-                brace_count = 0
-                den_start = num_end + 2
-                den_end = den_start
-                
-                for i in range(den_start, len(latex_text)):
-                    if latex_text[i] == '{':
-                        brace_count += 1
-                    elif latex_text[i] == '}':
-                        brace_count -= 1
-                        if brace_count == 0:
-                            den_end = i
-                            break
-                
-                if brace_count == 0:
-                    denominator = latex_text[den_start:den_end]
-                    replacement = f'({numerator})/({denominator})'
-                    latex_text = latex_text[:start] + replacement + latex_text[den_end + 1:]
-                else:
-                    break
-            else:
-                break
-        
-        # Subscripts và superscripts
-        subscript_map = {
-            '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', 
-            '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
-            'a': 'ₐ', 'e': 'ₑ', 'i': 'ᵢ', 'o': 'ₒ', 'u': 'ᵤ',
-            'x': 'ₓ', 'n': 'ₙ', 'm': 'ₘ'
-        }
-        
-        superscript_map = {
-            '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
-            '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
-            'n': 'ⁿ', 'i': 'ⁱ', '+': '⁺', '-': '⁻', '=': '⁼'
-        }
-        
-        # Xử lý subscripts
-        while '_{' in latex_text:
-            start = latex_text.find('_{')
-            if start == -1:
-                break
-            
-            brace_count = 0
-            content_start = start + 2
-            content_end = content_start
-            
-            for i in range(content_start, len(latex_text)):
-                if latex_text[i] == '{':
-                    brace_count += 1
-                elif latex_text[i] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        content_end = i
-                        break
-            
-            if brace_count == 0:
-                content = latex_text[content_start:content_end]
-                result = ''
-                for char in content:
-                    result += subscript_map.get(char, char)
-                
-                latex_text = latex_text[:start] + result + latex_text[content_end + 1:]
-            else:
-                break
-        
-        # Xử lý superscripts
-        while '^{' in latex_text:
-            start = latex_text.find('^{')
-            if start == -1:
-                break
-            
-            brace_count = 0
-            content_start = start + 2
-            content_end = content_start
-            
-            for i in range(content_start, len(latex_text)):
-                if latex_text[i] == '{':
-                    brace_count += 1
-                elif latex_text[i] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        content_end = i
-                        break
-            
-            if brace_count == 0:
-                content = latex_text[content_start:content_end]
-                result = ''
-                for char in content:
-                    result += superscript_map.get(char, char)
-                
-                latex_text = latex_text[:start] + result + latex_text[content_end + 1:]
-            else:
-                break
         
         # Replace LaTeX symbols
         for latex_symbol, unicode_char in latex_to_unicode.items():
@@ -900,7 +925,7 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} {size_names[i]}"
 
 def main():
-    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter - Final</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter - Improved</h1>', unsafe_allow_html=True)
     
     # Sidebar
     with st.sidebar:
@@ -938,16 +963,18 @@ def main():
         
         st.markdown("---")
         st.markdown("""
-        ### 📋 Hướng dẫn:
-        1. Nhập API key Gemini
-        2. Chọn tab PDF hoặc Ảnh  
-        3. Upload file và chờ xử lý
+        ### 📋 Cải tiến mới:
+        - ✅ **Chèn ảnh theo vị trí thực tế** thay vì từ khóa
+        - ✅ **Word equation objects** thật sự (OMML)
+        - ✅ **Superscript/subscript** trong equations
+        - ✅ **Phân số LaTeX** → Word fractions
+        - ✅ **Greek symbols** → Unicode chuẩn
         
         ### 🎯 Tính năng:
         - ✅ Padding thông minh - không mất chi tiết
         - ✅ Format A), B), C), D) chuẩn
-        - ✅ Equations Unicode trong Word
         - ✅ Multi-scale detection
+        - ✅ Position-based image insertion
         
         ### 📝 Định dạng output:
         **Trắc nghiệm 4 phương án:**
@@ -957,15 +984,6 @@ def main():
         B) [Đáp án]  
         C) [Đáp án]
         D) [Đáp án]
-        ```
-        
-        **Trắc nghiệm đúng sai:**
-        ```
-        Câu X: [nội dung]
-        a) [Đáp án]
-        b) [Đáp án]
-        c) [Đáp án]
-        d) [Đáp án]
         ```
         
         ### 🔑 Lấy API Key:
@@ -1103,9 +1121,9 @@ Câu X: [nội dung câu hỏi đầy đủ]
                             try:
                                 latex_result = gemini_api.convert_to_latex(img_bytes, "image/png", prompt_text)
                                 if latex_result:
-                                    # Chèn ảnh vào văn bản
+                                    # Chèn ảnh vào văn bản THEO VỊ TRÍ
                                     if enable_extraction and extracted_figures and CV2_AVAILABLE:
-                                        latex_result = image_extractor.insert_figures_into_text(
+                                        latex_result = image_extractor.insert_figures_into_text_by_position(
                                             latex_result, extracted_figures, h, w
                                         )
                                     
@@ -1132,7 +1150,7 @@ Câu X: [nội dung câu hỏi đầy đủ]
                             
                             # Debug images
                             if show_debug and all_debug_images:
-                                st.subheader("🔍 Debug - Ảnh đã phát hiện")
+                                st.subheader("🔍 Debug - Ảnh đã phát hiện (với tọa độ Y)")
                                 
                                 for debug_img, page_num, figures in all_debug_images:
                                     st.write(f"**Trang {page_num}:**")
@@ -1149,13 +1167,9 @@ Câu X: [nội dung câu hỏi đầy đủ]
                                                 st.write(f"**{fig['name']}**")
                                                 st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '🖼️ Hình'}")
                                                 st.write(f"🎯 Confidence: {fig['confidence']:.1f}%")
+                                                st.write(f"📍 Vị trí Y: {fig['y_position']}px")
                                                 st.write(f"📐 Tỷ lệ: {fig['aspect_ratio']:.2f}")
                                                 st.write(f"📏 Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px")
-                                                if 'solidity' in fig:
-                                                    st.write(f"🔺 Solidity: {fig['solidity']:.2f}")
-                                                if 'extent' in fig:
-                                                    st.write(f"📊 Extent: {fig['extent']:.2f}")
-                                                st.write(f"📦 Diện tích: {fig['area']:,}px²")
                         
                         # Lưu session
                         st.session_state.pdf_latex_content = combined_latex
@@ -1165,8 +1179,8 @@ Câu X: [nội dung câu hỏi đầy đủ]
                 # Tạo Word
                 if 'pdf_latex_content' in st.session_state:
                     st.markdown("---")
-                    if st.button("📥 Tạo file Word", key="create_word_pdf"):
-                        with st.spinner("🔄 Đang tạo file Word..."):
+                    if st.button("📥 Tạo file Word với Equations", key="create_word_pdf"):
+                        with st.spinner("🔄 Đang tạo file Word với equations..."):
                             try:
                                 extracted_figs = st.session_state.get('pdf_extracted_figures')
                                 original_imgs = st.session_state.pdf_images
@@ -1180,7 +1194,7 @@ Câu X: [nội dung câu hỏi đầy đủ]
                                 filename = f"{uploaded_pdf.name.split('.')[0]}_converted.docx"
                                 
                                 st.download_button(
-                                    label="📥 Tải file Word (với Equations)",
+                                    label="📥 Tải file Word (với Word Equations)",
                                     data=word_buffer.getvalue(),
                                     file_name=filename,
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -1193,12 +1207,13 @@ Câu X: [nội dung câu hỏi đầy đủ]
                                     mime="text/plain"
                                 )
                                 
-                                st.success("✅ File Word với Equations đã được tạo thành công!")
+                                st.success("✅ File Word với Word Equations đã được tạo thành công!")
+                                st.info("🎯 Equations được chuyển thành OMML objects, có thể chỉnh sửa trực tiếp trong Word!")
                             
                             except Exception as e:
                                 st.error(f"❌ Lỗi tạo file Word: {str(e)}")
     
-    # Tab Image (tương tự PDF)
+    # Tab Image (tương tự nhưng sử dụng position-based insertion)
     with tab2:
         st.header("🖼️ Chuyển đổi Ảnh sang LaTeX")
         
@@ -1297,7 +1312,7 @@ d) [nội dung đáp án d đầy đủ]
                             )
                             if latex_result:
                                 if enable_extraction and extracted_figures and CV2_AVAILABLE:
-                                    latex_result = image_extractor.insert_figures_into_text(
+                                    latex_result = image_extractor.insert_figures_into_text_by_position(
                                         latex_result, extracted_figures, h, w
                                     )
                                 
@@ -1325,7 +1340,7 @@ d) [nội dung đáp án d đầy đủ]
                         st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} ảnh/bảng")
                         
                         if show_debug and all_debug_images:
-                            st.subheader("🔍 Debug - Ảnh đã phát hiện")
+                            st.subheader("🔍 Debug - Ảnh đã phát hiện (với tọa độ Y)")
                             
                             for debug_img, img_name, figures in all_debug_images:
                                 st.write(f"**{img_name}:**")
@@ -1342,12 +1357,8 @@ d) [nội dung đáp án d đầy đủ]
                                             st.write(f"**{fig['name']}**")
                                             st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '🖼️ Hình'}")
                                             st.write(f"🎯 Confidence: {fig['confidence']:.1f}%")
+                                            st.write(f"📍 Vị trí Y: {fig['y_position']}px")
                                             st.write(f"📐 Tỷ lệ: {fig['aspect_ratio']:.2f}")
-                                            st.write(f"📏 Kích thước: {fig['bbox'][2]}×{fig['bbox'][3]}px")
-                                            if 'solidity' in fig:
-                                                st.write(f"🔺 Solidity: {fig['solidity']:.2f}")
-                                            if 'extent' in fig:
-                                                st.write(f"📊 Extent: {fig['extent']:.2f}")
                     
                     # Lưu session
                     st.session_state.image_latex_content = combined_latex
@@ -1357,8 +1368,8 @@ d) [nội dung đáp án d đầy đủ]
                 # Tạo Word
                 if 'image_latex_content' in st.session_state:
                     st.markdown("---")
-                    if st.button("📥 Tạo file Word", key="create_word_images"):
-                        with st.spinner("🔄 Đang tạo file Word..."):
+                    if st.button("📥 Tạo file Word với Equations", key="create_word_images"):
+                        with st.spinner("🔄 Đang tạo file Word với equations..."):
                             try:
                                 extracted_figs = st.session_state.get('image_extracted_figures')
                                 original_imgs = st.session_state.image_list
@@ -1370,7 +1381,7 @@ d) [nội dung đáp án d đầy đủ]
                                 )
                                 
                                 st.download_button(
-                                    label="📥 Tải file Word (với Equations)",
+                                    label="📥 Tải file Word (với Word Equations)",
                                     data=word_buffer.getvalue(),
                                     file_name="images_converted.docx",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -1383,7 +1394,8 @@ d) [nội dung đáp án d đầy đủ]
                                     mime="text/plain"
                                 )
                                 
-                                st.success("✅ File Word với Equations đã được tạo thành công!")
+                                st.success("✅ File Word với Word Equations đã được tạo thành công!")
+                                st.info("🎯 Equations được chuyển thành OMML objects, có thể chỉnh sửa trực tiếp trong Word!")
                             
                             except Exception as e:
                                 st.error(f"❌ Lỗi tạo file Word: {str(e)}")
@@ -1392,10 +1404,10 @@ d) [nội dung đáp án d đầy đủ]
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666;'>
-        <p>Được phát triển với ❤️ sử dụng Streamlit và Gemini 2.0 API</p>
-        <p>🎯 <strong>Final Version:</strong> Padding thông minh + Format A), B), C), D) chuẩn</p>
-        <p>📝 <strong>Unicode Equations:</strong> Cambria Math + LaTeX symbols</p>
-        <p>🔍 <strong>Smart Detection:</strong> Multi-scale + IoU filtering</p>
+        <p>🎯 <strong>IMPROVED VERSION:</strong> Position-based image insertion + Word equation objects</p>
+        <p>📝 <strong>Word Equations:</strong> OMML format với LaTeX → fractions, superscripts, subscripts</p>
+        <p>🔍 <strong>Smart Positioning:</strong> Ảnh được chèn theo tọa độ Y thực tế</p>
+        <p>⚖️ <strong>Fallback Support:</strong> Unicode nếu OMML fails</p>
     </div>
     """, unsafe_allow_html=True)
 
