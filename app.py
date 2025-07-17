@@ -898,7 +898,7 @@ class EnhancedWordExporter:
         Xử lý dòng chứa LaTeX equations - GIỮ NGUYÊN ${...}$ và CHUYỂN ĐỔI ```latex```
         """
         # Trước tiên, chuyển đổi ```latex ... ``` thành ${...}$
-        line = re.sub(r'```latex\s*\n(.*?)\n```', r'${\1}
+        line = re.sub(r'```latex\s*\n(.*?)\n```', r'${\1}', line, flags=re.DOTALL)
     
     @staticmethod
     def _insert_extracted_image(doc, img_name, extracted_figures, caption_prefix):
