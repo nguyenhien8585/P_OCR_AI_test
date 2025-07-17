@@ -1685,8 +1685,6 @@ VÍ DỤ ĐÚNG:
 
 if __name__ == "__main__":
     main()
-, line_lower):
-            priority += 120
         
         # High priority: từ khóa toán học
         if re.search(r'(hình hộp|hình chóp|hình thoi|hình vuông|hình chữ nhật)', line_lower):
