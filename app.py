@@ -3,7 +3,7 @@ import requests
 import base64
 import io
 import json
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance
 import fitz  # PyMuPDF
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
@@ -21,7 +21,7 @@ except ImportError:
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/Image to LaTeX Converter - Precise & Smart",
+    page_title="PDF/Image to LaTeX Converter - Universal & Smart",
     page_icon="📝",
     layout="wide"
 )
@@ -60,103 +60,242 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-class SmartImageExtractor:
-    """Class thông minh để tách CHỈ hình vẽ thực sự, không phải text blocks"""
+class UniversalImageExtractor:
+    """Class tối ưu hóa để tách ảnh/bảng CHÍNH XÁC cho mọi loại đề"""
     
     def __init__(self):
-        self.min_area_ratio = 0.01
-        self.min_area_abs = 3000  # Tăng để tránh text blocks nhỏ
-        self.min_width = 80
-        self.min_height = 80
-        self.max_figures = 10
-        self.padding = 15
-        self.confidence_threshold = 60  # Tăng để chỉ lấy ảnh chất lượng cao
+        # Tham số cơ bản - được điều chỉnh để phù hợp với mọi loại đề
+        self.min_area_ratio = 0.005     # Giảm xuống để catch các hình nhỏ
+        self.min_area_abs = 1500        # Giảm threshold
+        self.min_width = 60             # Flexible hơn
+        self.min_height = 60            
+        self.max_figures = 12           # Tăng để không miss figures
+        self.padding = 12               # Optimized padding
+        self.confidence_threshold = 45   # Giảm để bao gồm nhiều figures hơn
+        
+        # Tham số cho multi-format support
+        self.question_patterns = [
+            r'^[Cc]âu\s*\d+[\.\:\)]',           # Câu 1. / Câu 1:
+            r'^\d+[\.\:\)]',                     # 1. / 1:
+            r'^[Bb]ài\s*\d+[\.\:\)]',           # Bài 1. / Bài 1:
+            r'^[A-Z]\d*[\.\:\)]',               # A1. / A:
+            r'^[IVX]+[\.\:\)]',                 # I. / II:
+            r'^\(\d+\)',                        # (1)
+            r'^Question\s*\d+[\.\:]'            # Question 1.
+        ]
+        
+        # Từ khóa insertion - mở rộng cho nhiều context
+        self.insertion_triggers = {
+            'high_priority': [
+                'sau:', 'dưới đây:', 'bên dưới:', 'như sau:',
+                'hình vẽ sau:', 'bảng sau:', 'biểu đồ sau:',
+                'đồ thị sau:', 'sơ đồ sau:', 'minh họa sau:'
+            ],
+            'medium_priority': [
+                'hình', 'bảng', 'đồ thị', 'biểu đồ', 'sơ đồ',
+                'minh họa', 'figure', 'table', 'chart',
+                'diagram', 'graph', 'illustration'
+            ],
+            'context_keywords': [
+                'cho', 'xét', 'dựa vào', 'quan sát', 'xem',
+                'theo', 'từ', 'trong', 'với', 'based on'
+            ]
+        }
     
     def extract_figures_and_tables(self, image_bytes):
-        """Tách CHỈ hình vẽ/diagram thực sự, bỏ qua text blocks"""
+        """Tách ảnh/bảng với algorithm được cải thiện cho mọi loại đề"""
         if not CV2_AVAILABLE:
             return [], 0, 0
         
-        # Đọc ảnh
+        # 1. Tiền xử lý ảnh thông minh
         img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img = np.array(img_pil)
         h, w = img.shape[:2]
         
-        # Tiền xử lý để phát hiện hình vẽ
+        # 2. Multi-stage preprocessing cho better detection
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         
-        # Phát hiện text regions để loại trừ
-        text_mask = self._detect_text_regions_simple(gray, img)
+        # Enhance contrast và giảm noise
+        gray = self._enhance_image_quality(gray)
         
-        # Tăng cường cho geometric shapes
-        gray_enhanced = self._enhance_for_diagrams(gray)
+        # 3. Smart content detection
+        text_regions = self._detect_text_regions_improved(gray, img)
+        figure_regions = self._detect_figure_regions_improved(gray, img)
         
-        # Edge detection mạnh hơn cho hình vẽ
-        edges = cv2.Canny(gray_enhanced, 40, 120)
+        # 4. Advanced edge detection với multiple scales
+        edges = self._multi_scale_edge_detection(gray)
         
-        # Morphological operations để nối các đường nét
+        # 5. Remove text noise from edges
+        clean_edges = cv2.bitwise_and(edges, cv2.bitwise_not(text_regions))
+        
+        # 6. Find and filter contours
+        contours, _ = cv2.findContours(clean_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        candidates = self._analyze_contours(contours, w, h, img, gray)
+        
+        # 7. Intelligent filtering và classification
+        candidates = self._intelligent_filtering(candidates, w, h)
+        
+        # 8. Smart cropping với context preservation
+        final_figures = self._extract_with_smart_cropping(candidates, img, w, h)
+        
+        return final_figures, h, w
+    
+    def _enhance_image_quality(self, gray):
+        """Cải thiện chất lượng ảnh cho detection tốt hơn"""
+        # Gaussian blur nhẹ để giảm noise
+        enhanced = cv2.GaussianBlur(gray, (3, 3), 0)
+        
+        # CLAHE với tham số tối ưu
+        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+        enhanced = clahe.apply(enhanced)
+        
+        # Morphological opening để clean noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        enhanced = cv2.morphologyEx(enhanced, cv2.MORPH_OPEN, kernel)
+        
+        return enhanced
+    
+    def _detect_text_regions_improved(self, gray, img_color):
+        """Improved text region detection"""
+        text_mask = np.zeros(gray.shape, dtype=np.uint8)
+        
+        # 1. Color-based text detection (colored backgrounds)
+        hsv = cv2.cvtColor(img_color, cv2.COLOR_RGB2HSV)
+        
+        # Detect colored backgrounds more precisely
+        color_ranges = [
+            ([100, 50, 50], [130, 255, 255]),  # Blue
+            ([0, 50, 50], [10, 255, 255]),     # Red 1
+            ([170, 50, 50], [180, 255, 255]),  # Red 2
+            ([15, 50, 50], [35, 255, 255]),    # Yellow/Orange
+            ([45, 50, 50], [75, 255, 255]),    # Green
+        ]
+        
+        for lower, upper in color_ranges:
+            mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+            text_mask = cv2.bitwise_or(text_mask, mask)
+        
+        # 2. Morphology-based text line detection
+        # Horizontal text lines
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        h_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
+        
+        # Vertical text blocks (for some layouts)
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
+        v_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
+        
+        # Combine all text masks
+        text_mask = cv2.bitwise_or(text_mask, h_lines)
+        text_mask = cv2.bitwise_or(text_mask, v_lines)
+        
+        # Smooth the mask
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_CLOSE, kernel)
+        
+        return text_mask
+    
+    def _detect_figure_regions_improved(self, gray, img_color):
+        """Detect potential figure regions"""
+        figure_mask = np.zeros(gray.shape, dtype=np.uint8)
+        
+        # Look for regions with geometric content
+        # 1. Detect lines (figures often have many lines)
+        edges = cv2.Canny(gray, 30, 100)
+        
+        # 2. Hough lines to identify geometric content
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=20, minLineLength=10, maxLineGap=5)
+        
+        if lines is not None:
+            line_img = np.zeros_like(gray)
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                cv2.line(line_img, (x1, y1), (x2, y2), 255, 2)
+            
+            # Dilate to create regions
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
+            figure_mask = cv2.dilate(line_img, kernel, iterations=2)
+        
+        return figure_mask
+    
+    def _multi_scale_edge_detection(self, gray):
+        """Multi-scale edge detection for better figure detection"""
+        edges_combined = np.zeros_like(gray)
+        
+        # Multiple scales for different figure types
+        scales = [(50, 150), (30, 100), (20, 60)]
+        
+        for low, high in scales:
+            edges = cv2.Canny(gray, low, high)
+            edges_combined = cv2.bitwise_or(edges_combined, edges)
+        
+        # Morphological operations to connect broken edges
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        edges = cv2.dilate(edges, kernel, iterations=2)
-        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        edges_combined = cv2.morphologyEx(edges_combined, cv2.MORPH_CLOSE, kernel)
+        edges_combined = cv2.dilate(edges_combined, kernel, iterations=1)
         
-        # Loại bỏ text noise
-        edges = cv2.bitwise_and(edges, cv2.bitwise_not(text_mask))
-        
-        # Tìm contours của hình vẽ
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
+        return edges_combined
+    
+    def _analyze_contours(self, contours, w, h, img, gray):
+        """Analyze contours với improved metrics"""
         candidates = []
+        
         for cnt in contours:
+            # Basic geometric properties
             x, y, ww, hh = cv2.boundingRect(cnt)
             area = ww * hh
             area_ratio = area / (w * h)
             aspect_ratio = ww / (hh + 1e-6)
             
-            # Lọc cơ bản - chặt chẽ hơn
-            if area < self.min_area_abs or area_ratio < self.min_area_ratio or area_ratio > 0.4:
+            # Skip if too small or too large
+            if (area < self.min_area_abs or 
+                area_ratio < self.min_area_ratio or 
+                area_ratio > 0.5):
                 continue
             
             if ww < self.min_width or hh < self.min_height:
                 continue
             
-            # Aspect ratio cho geometric diagrams
-            if not (0.5 < aspect_ratio < 2.5):
+            # More flexible aspect ratio for diverse figures
+            if not (0.15 < aspect_ratio < 10.0):
                 continue
             
-            # Loại bỏ vùng ở rìa và quá nhỏ
-            margin = 0.05
+            # Skip edge regions with smaller margin
+            margin = 0.02
             if (x < margin*w or y < margin*h or 
                 (x+ww) > (1-margin)*w or (y+hh) > (1-margin)*h):
                 continue
             
-            # Kiểm tra xem có phải là diagram thực sự không
-            roi = gray[y:y+hh, x:x+ww]
-            roi_color = img[y:y+hh, x:x+ww]
-            
-            if not self._is_geometric_diagram(roi, roi_color, text_mask[y:y+hh, x:x+ww]):
-                continue
-            
-            # Tính đặc trưng shape
+            # Advanced shape analysis
             hull = cv2.convexHull(cnt)
             hull_area = cv2.contourArea(hull)
             contour_area = cv2.contourArea(cnt)
             
-            if hull_area == 0 or contour_area < 200:
+            if hull_area == 0 or contour_area < 100:
                 continue
             
             solidity = float(contour_area) / hull_area
             extent = float(contour_area) / area
             
-            # Stricter requirements cho diagrams
-            if solidity < 0.4 or extent < 0.3:
+            # More lenient shape requirements
+            if solidity < 0.25 or extent < 0.2:
                 continue
             
-            # Phân loại: Chủ yếu là diagrams, ít table
-            is_table = self._is_data_table(roi, ww, hh, aspect_ratio)
+            # ROI analysis
+            roi = gray[y:y+hh, x:x+ww]
+            roi_color = img[y:y+hh, x:x+ww]
             
-            # Tính confidence cho diagrams
-            confidence = self._calculate_diagram_confidence(
-                area_ratio, aspect_ratio, solidity, extent, ww, hh, w, h, roi
+            # Content analysis
+            content_score = self._analyze_content_type(roi, roi_color)
+            
+            # Classification
+            is_table = self._classify_as_table(roi, ww, hh, aspect_ratio)
+            
+            # Enhanced confidence calculation
+            confidence = self._calculate_enhanced_confidence(
+                area_ratio, aspect_ratio, solidity, extent, 
+                content_score, ww, hh, w, h
             )
             
             if confidence >= self.confidence_threshold:
@@ -168,36 +307,200 @@ class SmartImageExtractor:
                     "aspect_ratio": aspect_ratio,
                     "solidity": solidity,
                     "extent": extent,
+                    "content_score": content_score,
                     "bbox": (x, y, ww, hh),
                     "center_y": y + hh // 2,
                     "y_position": y,
                     "is_diagram": not is_table
                 })
         
-        # Sắp xếp và lọc overlap
-        candidates = sorted(candidates, key=lambda f: f['confidence'], reverse=True)
-        candidates = self._filter_overlapping_smart(candidates)
-        candidates = candidates[:self.max_figures]
-        candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
+        return candidates
+    
+    def _analyze_content_type(self, roi, roi_color):
+        """Analyze ROI content to determine figure likelihood"""
+        if roi.shape[0] < 20 or roi.shape[1] < 20:
+            return 0
         
-        # Tạo ảnh kết quả với cropping thông minh
+        score = 0
+        
+        # 1. Edge density (figures have more edges)
+        edges = cv2.Canny(roi, 50, 150)
+        edge_density = np.sum(edges > 0) / (roi.shape[0] * roi.shape[1])
+        
+        if edge_density > 0.05:
+            score += 30
+        elif edge_density > 0.02:
+            score += 20
+        
+        # 2. Line detection (geometric figures have lines)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=15, minLineLength=10, maxLineGap=3)
+        line_count = len(lines) if lines is not None else 0
+        
+        if line_count > 5:
+            score += 25
+        elif line_count > 2:
+            score += 15
+        
+        # 3. Color variation (figures often have more color variation than text)
+        hsv_roi = cv2.cvtColor(roi_color, cv2.COLOR_RGB2HSV)
+        color_std = np.std(hsv_roi[:,:,1])  # Saturation std
+        
+        if color_std > 25:
+            score += 20
+        elif color_std > 15:
+            score += 10
+        
+        # 4. Texture analysis (figures have different texture than text)
+        gray_roi = cv2.cvtColor(roi_color, cv2.COLOR_RGB2GRAY)
+        texture_score = np.std(gray_roi)
+        
+        if texture_score > 30:
+            score += 15
+        
+        return min(100, score)
+    
+    def _classify_as_table(self, roi, w, h, aspect_ratio):
+        """Improved table classification"""
+        # Basic table criteria
+        if aspect_ratio < 1.3:  # Tables are usually wider
+            return False
+        
+        # Look for grid structure
+        edges = cv2.Canny(roi, 50, 150)
+        
+        # Horizontal lines (table rows)
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//3, 1))
+        h_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, h_kernel)
+        h_contours = cv2.findContours(h_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        
+        # Vertical lines (table columns)
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//3))
+        v_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, v_kernel)
+        v_contours = cv2.findContours(v_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        
+        # Table needs both horizontal and vertical structure
+        return len(h_contours) >= 2 and len(v_contours) >= 2
+    
+    def _calculate_enhanced_confidence(self, area_ratio, aspect_ratio, solidity, extent, content_score, w, h, img_w, img_h):
+        """Enhanced confidence calculation"""
+        confidence = 0
+        
+        # Size score (balanced for various figure sizes)
+        if 0.008 < area_ratio < 0.3:
+            confidence += 35
+        elif 0.005 < area_ratio < 0.4:
+            confidence += 25
+        else:
+            confidence += 10
+        
+        # Aspect ratio score (more flexible)
+        if 0.6 < aspect_ratio < 1.8:  # Near square (common for diagrams)
+            confidence += 25
+        elif 0.3 < aspect_ratio < 3.0:  # Moderate rectangle
+            confidence += 20
+        elif 0.15 < aspect_ratio < 6.0:  # Wide range
+            confidence += 15
+        else:
+            confidence += 5
+        
+        # Shape quality
+        if solidity > 0.5:
+            confidence += 20
+        elif solidity > 0.3:
+            confidence += 15
+        else:
+            confidence += 5
+        
+        if extent > 0.4:
+            confidence += 15
+        elif extent > 0.25:
+            confidence += 10
+        
+        # Content score contribution
+        confidence += content_score * 0.2
+        
+        return min(100, confidence)
+    
+    def _intelligent_filtering(self, candidates, w, h):
+        """Intelligent filtering to remove overlaps and false positives"""
+        # Sort by confidence
+        candidates = sorted(candidates, key=lambda x: x['confidence'], reverse=True)
+        
+        # Remove overlaps with smart IoU calculation
+        filtered = []
+        for candidate in candidates:
+            is_duplicate = False
+            
+            for existing in filtered:
+                iou = self._calculate_iou(candidate, existing)
+                if iou > 0.15:  # Lower threshold to avoid removing nearby figures
+                    # Keep the one with higher confidence
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                filtered.append(candidate)
+        
+        # Limit number but don't be too restrictive
+        filtered = filtered[:self.max_figures]
+        
+        # Sort by position for insertion
+        filtered = sorted(filtered, key=lambda x: (x["y0"], x["x0"]))
+        
+        return filtered
+    
+    def _calculate_iou(self, box1, box2):
+        """Calculate Intersection over Union"""
+        x1_min, y1_min, x1_max, y1_max = box1['x0'], box1['y0'], box1['x1'], box1['y1']
+        x2_min, y2_min, x2_max, y2_max = box2['x0'], box2['y0'], box2['x1'], box2['y1']
+        
+        # Calculate intersection area
+        x_overlap = max(0, min(x1_max, x2_max) - max(x1_min, x2_min))
+        y_overlap = max(0, min(y1_max, y2_max) - max(y1_min, y2_min))
+        intersection = x_overlap * y_overlap
+        
+        # Calculate union area
+        area1 = (x1_max - x1_min) * (y1_max - y1_min)
+        area2 = (x2_max - x2_min) * (y2_max - y2_min)
+        union = area1 + area2 - intersection
+        
+        return intersection / union if union > 0 else 0
+    
+    def _extract_with_smart_cropping(self, candidates, img, img_w, img_h):
+        """Smart cropping với context preservation"""
         final_figures = []
         img_idx = 0
         table_idx = 0
         
         for fig_data in candidates:
-            # Smart cropping để loại bỏ noise xung quanh
-            clean_crop = self._extract_clean_diagram(img, fig_data, w, h)
+            # Smart padding calculation
+            x, y, w, h = fig_data["bbox"]
             
-            if clean_crop is None or clean_crop.size == 0:
+            # Adaptive padding based on figure size
+            padding_x = min(self.padding, w // 8, (img_w - (x + w)) // 2, x // 2)
+            padding_y = min(self.padding, h // 8, (img_h - (y + h)) // 2, y // 2)
+            
+            # Calculate crop bounds
+            x0 = max(0, x - padding_x)
+            y0 = max(0, y - padding_y)
+            x1 = min(img_w, x + w + padding_x)
+            y1 = min(img_h, y + h + padding_y)
+            
+            # Extract and enhance crop
+            crop = img[y0:y1, x0:x1]
+            
+            if crop.size == 0:
                 continue
             
-            # Chuyển thành base64
+            # Post-process crop for better quality
+            crop_enhanced = self._enhance_crop_quality(crop)
+            
+            # Convert to base64
             buf = io.BytesIO()
-            Image.fromarray(clean_crop).save(buf, format="JPEG", quality=95)
+            Image.fromarray(crop_enhanced).save(buf, format="JPEG", quality=95)
             b64 = base64.b64encode(buf.getvalue()).decode()
             
-            # Đặt tên file
+            # Generate filename
             if fig_data["is_table"]:
                 name = f"table-{table_idx+1}.jpeg"
                 table_idx += 1
@@ -216,401 +519,208 @@ class SmartImageExtractor:
                 "area": fig_data["area"],
                 "solidity": fig_data["solidity"],
                 "extent": fig_data["extent"],
+                "content_score": fig_data["content_score"],
                 "center_y": fig_data["center_y"],
                 "y_position": fig_data["y_position"],
                 "is_diagram": fig_data["is_diagram"]
             })
         
-        return final_figures, h, w
+        return final_figures
     
-    def _detect_text_regions_simple(self, gray, img_color):
-        """Phát hiện vùng text để loại trừ"""
-        # Phát hiện các vùng có màu nền đồng nhất (text blocks)
-        hsv = cv2.cvtColor(img_color, cv2.COLOR_RGB2HSV)
+    def _enhance_crop_quality(self, crop):
+        """Enhance extracted crop quality"""
+        # Convert to PIL for enhancement
+        pil_crop = Image.fromarray(crop)
         
-        # Tạo mask cho các vùng màu nền
-        color_mask = np.zeros(gray.shape, dtype=np.uint8)
+        # Slight sharpening
+        enhancer = ImageEnhance.Sharpness(pil_crop)
+        pil_crop = enhancer.enhance(1.1)
         
-        # Phát hiện background colors (blue, red, yellow, etc.)
-        # Blue backgrounds
-        lower_blue = np.array([100, 50, 50])
-        upper_blue = np.array([130, 255, 255])
-        blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
+        # Slight contrast enhancement
+        enhancer = ImageEnhance.Contrast(pil_crop)
+        pil_crop = enhancer.enhance(1.05)
         
-        # Red backgrounds  
-        lower_red1 = np.array([0, 50, 50])
-        upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([170, 50, 50])
-        upper_red2 = np.array([180, 255, 255])
-        red_mask = cv2.bitwise_or(
-            cv2.inRange(hsv, lower_red1, upper_red1),
-            cv2.inRange(hsv, lower_red2, upper_red2)
-        )
-        
-        # Yellow/Orange backgrounds
-        lower_yellow = np.array([15, 50, 50])
-        upper_yellow = np.array([35, 255, 255])
-        yellow_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-        
-        # Combine color masks
-        color_mask = cv2.bitwise_or(cv2.bitwise_or(blue_mask, red_mask), yellow_mask)
-        
-        # Morphological operations để làm mịn
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
-        
-        # Text detection với morphology
-        kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1))
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        text_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_h)
-        
-        # Combine text và color masks
-        text_mask = cv2.bitwise_or(color_mask, text_lines)
-        
-        return text_mask
+        return np.array(pil_crop)
     
-    def _enhance_for_diagrams(self, gray):
-        """Tăng cường ảnh để phát hiện diagrams tốt hơn"""
-        # Gaussian blur nhẹ
-        enhanced = cv2.GaussianBlur(gray, (3, 3), 0)
-        
-        # Contrast enhancement
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(enhanced)
-        
-        return enhanced
-    
-    def _is_geometric_diagram(self, roi, roi_color, text_mask_roi):
-        """Kiểm tra xem có phải là geometric diagram không"""
-        if roi.shape[0] < 50 or roi.shape[1] < 50:
-            return False
-        
-        # Tính tỷ lệ text trong ROI
-        text_ratio = np.sum(text_mask_roi > 0) / (roi.shape[0] * roi.shape[1])
-        
-        # Nếu quá nhiều text, không phải diagram
-        if text_ratio > 0.4:
-            return False
-        
-        # Kiểm tra geometric content
-        edges = cv2.Canny(roi, 50, 150)
-        edge_density = np.sum(edges > 0) / (roi.shape[0] * roi.shape[1])
-        
-        # Diagram cần có đủ geometric content
-        if edge_density < 0.03:
-            return False
-        
-        # Kiểm tra line patterns (geometric shapes có nhiều đường thẳng)
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=20, minLineLength=15, maxLineGap=5)
-        line_count = len(lines) if lines is not None else 0
-        
-        # Geometric diagrams thường có nhiều lines
-        if line_count < 3:
-            return False
-        
-        # Kiểm tra color consistency (diagrams thường có màu đồng nhất hơn text blocks)
-        hsv_roi = cv2.cvtColor(roi_color, cv2.COLOR_RGB2HSV)
-        color_std = np.std(hsv_roi[:,:,1])  # Saturation standard deviation
-        
-        # Text blocks có màu nền đồng nhất hơn
-        if color_std < 20:
-            return False
-        
-        return True
-    
-    def _is_data_table(self, roi, w, h, aspect_ratio):
-        """Phân biệt table vs diagram"""
-        # Table thường rộng hơn cao và có grid structure
-        if aspect_ratio < 1.2:
-            return False
-        
-        # Phát hiện grid lines
-        edges = cv2.Canny(roi, 50, 150)
-        
-        # Horizontal lines
-        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//4, 1))
-        h_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, h_kernel)
-        h_contours = cv2.findContours(h_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-        
-        # Vertical lines
-        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//4))
-        v_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, v_kernel)
-        v_contours = cv2.findContours(v_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-        
-        # Table cần có cả horizontal và vertical lines
-        return len(h_contours) >= 2 and len(v_contours) >= 2
-    
-    def _calculate_diagram_confidence(self, area_ratio, aspect_ratio, solidity, extent, w, h, img_w, img_h, roi):
-        """Tính confidence cho diagrams"""
-        confidence = 0
-        
-        # Base score từ size (diagrams thường có kích thước vừa phải)
-        if 0.02 < area_ratio < 0.25:
-            confidence += 40
-        elif 0.015 < area_ratio < 0.35:
-            confidence += 25
-        else:
-            confidence += 10
-        
-        # Score từ aspect ratio (diagrams thường gần vuông)
-        if 0.7 < aspect_ratio < 1.4:
-            confidence += 30
-        elif 0.5 < aspect_ratio < 2.0:
-            confidence += 20
-        else:
-            confidence += 5
-        
-        # Score từ shape quality
-        if solidity > 0.6:
-            confidence += 20
-        elif solidity > 0.4:
-            confidence += 10
-        
-        if extent > 0.5:
-            confidence += 10
-        elif extent > 0.3:
-            confidence += 5
-        
-        return min(100, confidence)
-    
-    def _filter_overlapping_smart(self, candidates):
-        """Lọc overlap thông minh - ưu tiên diagrams chất lượng cao"""
-        filtered = []
-        
-        for candidate in candidates:
-            is_overlap = False
-            x0, y0, x1, y1 = candidate['x0'], candidate['y0'], candidate['x1'], candidate['y1']
-            area1 = (x1-x0) * (y1-y0)
-            
-            for other in filtered:
-                ox0, oy0, ox1, oy1 = other['x0'], other['y0'], other['x1'], other['y1']
-                area2 = (ox1-ox0) * (oy1-oy0)
-                
-                # Tính IoU
-                intersection_area = max(0, min(x1, ox1) - max(x0, ox0)) * max(0, min(y1, oy1) - max(y0, oy0))
-                union_area = area1 + area2 - intersection_area
-                
-                if union_area > 0:
-                    iou = intersection_area / union_area
-                    if iou > 0.2:  # Threshold thấp hơn để tránh loại bỏ diagrams gần nhau
-                        is_overlap = True
-                        break
-            
-            if not is_overlap:
-                filtered.append(candidate)
-        
-        return filtered
-    
-    def _extract_clean_diagram(self, img, fig_data, img_w, img_h):
-        """Cắt diagram sạch với padding thích hợp"""
-        x, y, w, h = fig_data["bbox"]
-        
-        # Padding nhỏ để tránh cắt text xung quanh
-        padding = min(self.padding, min(w, h) // 8)
-        
-        x0 = max(0, x - padding)
-        y0 = max(0, y - padding)
-        x1 = min(img_w, x + w + padding)
-        y1 = min(img_h, y + h + padding)
-        
-        crop = img[y0:y1, x0:x1]
-        
-        if crop.size == 0:
-            return None
-        
-        return crop
-    
-    def insert_figures_into_text_precisely(self, text, figures, img_h, img_w):
-        """Chèn ảnh vào văn bản CHÍNH XÁC 100% theo vị trí và ngữ cảnh"""
+    def insert_figures_into_text_universal(self, text, figures, img_h, img_w):
+        """Universal insertion algorithm cho mọi loại đề"""
         if not figures:
             return text
         
         lines = text.split('\n')
         
-        # Sắp xếp figures theo vị trí Y từ trên xuống dưới
-        sorted_figures = sorted(figures, key=lambda f: f['y_position'])
+        # Phân tích structure của text
+        text_structure = self._analyze_universal_structure(lines)
         
-        # Phân tích cấu trúc câu hỏi chi tiết
-        question_structure = self._analyze_question_structure_detailed(lines)
+        # Map figures to appropriate positions
+        figure_placements = self._map_figures_universal(figures, text_structure, img_h)
         
-        # Ánh xạ từng figure với câu hỏi tương ứng
-        figure_question_mapping = self._map_figures_to_questions(
-            sorted_figures, question_structure, img_h
-        )
-        
-        # Chèn từng figure vào đúng vị trí
-        result_lines = lines[:]
-        inserted_count = 0
-        
-        for figure_info in figure_question_mapping:
-            figure = figure_info['figure']
-            question_info = figure_info['question']
-            insertion_line = figure_info['insertion_line']
-            
-            if insertion_line is not None:
-                insertion_index = insertion_line + inserted_count
-                
-                if insertion_index <= len(result_lines):
-                    tag = f"\n[BẢNG: {figure['name']}]\n" if figure['is_table'] else f"\n[HÌNH: {figure['name']}]\n"
-                    result_lines.insert(insertion_index, tag)
-                    inserted_count += 1
+        # Insert figures
+        result_lines = self._insert_figures_smart(lines, figure_placements)
         
         return '\n'.join(result_lines)
     
-    def _analyze_question_structure_detailed(self, lines):
-        """Phân tích cấu trúc câu hỏi chi tiết"""
-        questions = []
-        current_question = None
+    def _analyze_universal_structure(self, lines):
+        """Analyze text structure for universal question formats"""
+        structure = {
+            'questions': [],
+            'sections': [],
+            'insertion_points': []
+        }
         
         for i, line in enumerate(lines):
             line_content = line.strip()
+            if not line_content:
+                continue
             
-            # Nhận diện bắt đầu câu hỏi
-            question_match = re.match(r'^câu\s+(\d+)', line_content.lower())
-            if question_match:
-                # Lưu câu hỏi trước đó
-                if current_question:
-                    questions.append(current_question)
-                
-                # Tạo câu hỏi mới
-                current_question = {
-                    'number': int(question_match.group(1)),
-                    'start_line': i,
-                    'title_line': i,
-                    'description_lines': [],
-                    'insertion_candidates': [],
-                    'answer_start': None,
-                    'estimated_y_start': i,
-                    'estimated_y_end': None
-                }
+            line_lower = line_content.lower()
             
-            elif current_question:
-                # Phân tích nội dung câu hỏi
-                line_lower = line_content.lower()
-                
-                # Tìm các vị trí có thể chèn ảnh
-                if any(marker in line_lower for marker in [
-                    'khẳng định sau:', 'sau:', 'xét tính đúng sai',
-                    'cho hình', 'trong hình', 'hình sau'
-                ]):
-                    current_question['insertion_candidates'].append({
+            # Detect questions with multiple patterns
+            is_question = False
+            for pattern in self.question_patterns:
+                if re.match(pattern, line_content, re.IGNORECASE):
+                    is_question = True
+                    break
+            
+            if is_question:
+                structure['questions'].append({
+                    'line': i,
+                    'content': line_content,
+                    'insertion_candidates': []
+                })
+            
+            # Find high-priority insertion points
+            for trigger in self.insertion_triggers['high_priority']:
+                if trigger in line_lower:
+                    structure['insertion_points'].append({
                         'line': i,
-                        'content': line_content,
-                        'priority': self._calculate_insertion_priority(line_content)
+                        'priority': 100,
+                        'trigger': trigger,
+                        'content': line_content
                     })
-                    current_question['description_lines'].append(i)
-                
-                # Tìm bắt đầu đáp án
-                elif re.match(r'^[a-d]\)', line_content) or re.match(r'^[A-D]\)', line_content):
-                    if current_question['answer_start'] is None:
-                        current_question['answer_start'] = i
-                        current_question['estimated_y_end'] = i
-                
-                # Các dòng mô tả khác
-                elif not line_content.startswith('Câu') and line_content:
-                    current_question['description_lines'].append(i)
+            
+            # Find medium-priority insertion points
+            for trigger in self.insertion_triggers['medium_priority']:
+                if trigger in line_lower:
+                    # Check for context keywords to boost priority
+                    priority = 60
+                    for context in self.insertion_triggers['context_keywords']:
+                        if context in line_lower:
+                            priority += 20
+                            break
+                    
+                    structure['insertion_points'].append({
+                        'line': i,
+                        'priority': priority,
+                        'trigger': trigger,
+                        'content': line_content
+                    })
         
-        # Lưu câu hỏi cuối cùng
-        if current_question:
-            questions.append(current_question)
-        
-        # Sắp xếp insertion candidates theo priority
-        for question in questions:
+        # Add insertion candidates to questions
+        for question in structure['questions']:
+            q_line = question['line']
+            # Look for insertion points near this question
+            for point in structure['insertion_points']:
+                if abs(point['line'] - q_line) <= 5:  # Within 5 lines
+                    question['insertion_candidates'].append(point)
+            
+            # Sort by priority
             question['insertion_candidates'].sort(key=lambda x: x['priority'], reverse=True)
         
-        return questions
+        return structure
     
-    def _calculate_insertion_priority(self, line_content):
-        """Tính độ ưu tiên cho vị trí chèn"""
-        line_lower = line_content.lower()
-        priority = 0
+    def _map_figures_universal(self, figures, text_structure, img_h):
+        """Universal figure mapping algorithm"""
+        # Sort figures by vertical position
+        sorted_figures = sorted(figures, key=lambda f: f['y_position'])
         
-        # Cao nhất: dòng kết thúc bằng "sau:"
-        if line_lower.endswith('sau:'):
-            priority += 100
-        
-        # Cao: có "khẳng định sau"
-        if 'khẳng định sau' in line_lower:
-            priority += 80
-        
-        # Trung bình cao: "xét tính đúng sai"
-        if 'xét tính đúng sai' in line_lower:
-            priority += 60
-        
-        # Trung bình: references đến hình
-        if any(ref in line_lower for ref in ['cho hình', 'trong hình', 'hình sau']):
-            priority += 40
-        
-        # Thấp: chỉ có "sau:"
-        if 'sau:' in line_lower and 'khẳng định' not in line_lower:
-            priority += 20
-        
-        return priority
-    
-    def _map_figures_to_questions(self, figures, questions, img_h):
-        """Ánh xạ từng figure với câu hỏi tương ứng"""
         mappings = []
         
-        for figure in figures:
+        for figure in sorted_figures:
             figure_y_ratio = figure['y_position'] / img_h
-            best_match = None
+            best_insertion = None
             best_score = 0
             
-            for question in questions:
-                # Ước tính vị trí Y của câu hỏi
-                question_y_start = question['estimated_y_start'] / len(questions) if questions else 0
-                question_y_end = question.get('estimated_y_end', question['estimated_y_start'] + 10) / len(questions) if questions else 1
+            # Try to match with insertion points
+            for point in text_structure['insertion_points']:
+                # Calculate position-based score
+                line_ratio = point['line'] / max(1, len(text_structure['insertion_points']))
+                distance_score = max(0, 100 - abs(figure_y_ratio - line_ratio) * 200)
                 
-                # Tính điểm dựa trên vị trí Y
-                if question_y_start <= figure_y_ratio <= question_y_end:
-                    position_score = 100  # Perfect match
-                else:
-                    # Distance-based scoring
-                    distance_to_start = abs(figure_y_ratio - question_y_start)
-                    distance_to_end = abs(figure_y_ratio - question_y_end)
-                    min_distance = min(distance_to_start, distance_to_end)
-                    position_score = max(0, 80 - min_distance * 100)
+                # Combine with priority
+                total_score = distance_score * 0.6 + point['priority'] * 0.4
                 
-                # Điểm thưởng nếu có insertion candidates chất lượng cao
-                insertion_bonus = 0
-                if question['insertion_candidates']:
-                    max_priority = max(c['priority'] for c in question['insertion_candidates'])
-                    insertion_bonus = min(20, max_priority // 5)
-                
-                total_score = position_score + insertion_bonus
+                # Boost score for table/figure type matching
+                if figure['is_table'] and 'bảng' in point['trigger']:
+                    total_score += 20
+                elif not figure['is_table'] and any(word in point['trigger'] for word in ['hình', 'đồ thị', 'biểu đồ']):
+                    total_score += 20
                 
                 if total_score > best_score:
                     best_score = total_score
-                    best_match = question
+                    best_insertion = point
             
-            # Xác định vị trí chèn trong câu hỏi tốt nhất
-            insertion_line = None
-            if best_match and best_score > 30:  # Threshold để chấp nhận match
-                if best_match['insertion_candidates']:
-                    # Chọn vị trí có priority cao nhất
-                    best_candidate = best_match['insertion_candidates'][0]
-                    insertion_line = best_candidate['line'] + 1
-                elif best_match['description_lines']:
-                    # Fallback: chèn sau dòng mô tả cuối cùng
-                    insertion_line = max(best_match['description_lines']) + 1
-                else:
-                    # Fallback cuối: chèn sau title
-                    insertion_line = best_match['title_line'] + 1
+            # Fallback to questions if no good insertion point found
+            if best_score < 40:
+                for question in text_structure['questions']:
+                    q_line_ratio = question['line'] / max(1, len(text_structure['questions']))
+                    distance_score = max(0, 80 - abs(figure_y_ratio - q_line_ratio) * 150)
+                    
+                    if distance_score > best_score:
+                        best_score = distance_score
+                        best_insertion = {
+                            'line': question['line'] + 1,  # Insert after question
+                            'priority': 50,
+                            'trigger': 'question_fallback'
+                        }
             
             mappings.append({
                 'figure': figure,
-                'question': best_match,
-                'insertion_line': insertion_line,
-                'confidence': best_score
+                'insertion_point': best_insertion,
+                'score': best_score
             })
         
-        # Sắp xếp theo thứ tự chèn
-        mappings.sort(key=lambda x: x['insertion_line'] if x['insertion_line'] else float('inf'))
+        # Sort by insertion line to maintain order
+        mappings.sort(key=lambda x: x['insertion_point']['line'] if x['insertion_point'] else float('inf'))
         
         return mappings
     
+    def _insert_figures_smart(self, lines, figure_placements):
+        """Smart insertion maintaining text flow"""
+        result_lines = lines[:]
+        inserted_count = 0
+        
+        for placement in figure_placements:
+            if placement['insertion_point'] is None:
+                continue
+            
+            figure = placement['figure']
+            insertion_line = placement['insertion_point']['line'] + inserted_count
+            
+            # Ensure we don't insert beyond text bounds
+            if insertion_line > len(result_lines):
+                insertion_line = len(result_lines)
+            
+            # Create tag
+            tag = f"\n[BẢNG: {figure['name']}]\n" if figure['is_table'] else f"\n[HÌNH: {figure['name']}]\n"
+            
+            # Insert with proper spacing
+            if insertion_line < len(result_lines):
+                # Check if we need to add spacing
+                if insertion_line > 0 and result_lines[insertion_line-1].strip():
+                    if not result_lines[insertion_line-1].endswith(':'):
+                        tag = tag
+                
+                result_lines.insert(insertion_line, tag.strip())
+                inserted_count += 1
+            else:
+                result_lines.append(tag.strip())
+                inserted_count += 1
+        
+        return result_lines
+    
     def create_debug_image(self, image_bytes, figures):
-        """Tạo ảnh debug cho geometric diagrams"""
+        """Create debug visualization"""
         img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img_pil)
         
@@ -621,27 +731,27 @@ class SmartImageExtractor:
             bbox = fig['original_bbox']
             x, y, w, h = bbox
             
-            # Vẽ khung
+            # Draw bounding box
             thickness = 3
             draw.rectangle([x, y, x+w, y+h], outline=color, width=thickness)
             
-            # Vẽ label với info mới
-            type_label = "TBL" if fig['is_table'] else "DGM"
-            diagram_status = "✓" if fig.get('is_diagram', True) else "✗"
-            label = f"{fig['name']}\n{type_label}{diagram_status}: {fig['confidence']:.0f}%\nY: {fig['y_position']}"
+            # Create detailed label
+            type_label = "TBL" if fig['is_table'] else "IMG"
+            label = f"{fig['name']}\n{type_label}: {fig['confidence']:.0f}%\nScore: {fig.get('content_score', 0):.0f}"
             
-            # Vẽ text background
+            # Draw background for text
             lines = label.split('\n')
             max_width = max(len(line) for line in lines) * 8
             text_height = len(lines) * 15
             draw.rectangle([x, y-text_height-5, x+max_width, y], fill=color, outline=color)
             
-            # Vẽ text
+            # Draw text
             for j, line in enumerate(lines):
                 draw.text((x+2, y-text_height+j*13), line, fill='white')
         
         return img_pil
 
+# GeminiAPI class (unchanged)
 class GeminiAPI:
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -711,6 +821,7 @@ class GeminiAPI:
         except Exception as e:
             raise Exception(str(e))
 
+# PDFProcessor class (unchanged)
 class PDFProcessor:
     @staticmethod
     def extract_images_and_text(pdf_file):
@@ -728,6 +839,7 @@ class PDFProcessor:
         pdf_document.close()
         return images
 
+# SimpleWordExporter class (unchanged)
 class SimpleWordExporter:
     @staticmethod
     def create_word_document(latex_content: str, extracted_figures=None, images=None) -> io.BytesIO:
@@ -911,7 +1023,7 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} {size_names[i]}"
 
 def main():
-    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter - Precise & Smart</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📝 PDF/Image to LaTeX Converter - Universal & Smart</h1>', unsafe_allow_html=True)
     
     # Sidebar
     with st.sidebar:
@@ -933,15 +1045,15 @@ def main():
         
         # Cài đặt tách ảnh
         if CV2_AVAILABLE:
-            st.subheader("🖼️ Tách diagram chính xác")
-            enable_extraction = st.checkbox("Bật tách geometric diagrams", value=True)
+            st.subheader("🖼️ Tách ảnh thông minh")
+            enable_extraction = st.checkbox("Bật tách ảnh/bảng", value=True)
             
             if enable_extraction:
-                min_area = st.slider("Diện tích tối thiểu (%)", 0.5, 3.0, 1.0, 0.1) / 100
-                max_figures = st.slider("Số ảnh tối đa", 1, 15, 10, 1)
-                min_size = st.slider("Kích thước tối thiểu (px)", 60, 200, 80, 10)
-                padding = st.slider("Padding xung quanh (px)", 5, 30, 15, 5)
-                confidence_threshold = st.slider("Ngưỡng confidence (%)", 40, 90, 60, 5)
+                min_area = st.slider("Diện tích tối thiểu (%)", 0.3, 2.0, 0.5, 0.1) / 100
+                max_figures = st.slider("Số ảnh tối đa", 1, 20, 12, 1)
+                min_size = st.slider("Kích thước tối thiểu (px)", 40, 120, 60, 10)
+                padding = st.slider("Padding xung quanh (px)", 5, 25, 12, 2)
+                confidence_threshold = st.slider("Ngưỡng confidence (%)", 30, 80, 45, 5)
                 show_debug = st.checkbox("Hiển thị ảnh debug", value=True)
         else:
             enable_extraction = False
@@ -949,25 +1061,26 @@ def main():
         
         st.markdown("---")
         st.markdown("""
-        ### ✅ **Phiên bản chính xác 100%:**
-        - ✅ **Lọc text blocks** - Không cắt bảng đáp án màu 
-        - ✅ **Chỉ tách diagrams** - Geometric shapes thực sự
-        - ✅ **Color masking** - Loại bỏ background màu
-        - ✅ **Precise insertion** - Chèn đúng 100% vị trí
-        - ✅ **Question mapping** - Ánh xạ figure-câu hỏi chính xác
+        ### ✅ **Universal Version:**
+        - 🎯 **Multi-format support** - Tất cả loại đề
+        - 🧠 **Smart detection** - AI-powered figure detection
+        - 📍 **Precise insertion** - Context-aware positioning  
+        - ✂️ **Smart cropping** - Beautiful figure extraction
+        - 🔍 **Enhanced quality** - Better image processing
         
-        ### 🎯 Fixes:
-        - ❌ Không còn cắt text blocks có màu nền
-        - ✅ Chỉ cắt hình vẽ geometry thực sự  
-        - ✅ Chèn đúng sau "khẳng định sau:"
-        - ✅ Ánh xạ figure với câu hỏi tương ứng
-        - ✅ Priority-based insertion
+        ### 🚀 Improvements:
+        - ✅ Hỗ trợ đa định dạng câu hỏi
+        - ✅ Insertion thông minh hơn
+        - ✅ Cắt ảnh đẹp với padding adaptive
+        - ✅ Confidence scoring cải tiến
+        - ✅ Content-aware classification
         
-        ### 📝 Kết quả:
+        ### 📝 Hoạt động với:
         ```
-        Câu X: [nội dung]
-        [HÌNH: img-1.jpeg] ← ĐÚNG VỊ TRÍ
-        A) [Đáp án]
+        Câu 1: / 1. / Bài 1: / A1:
+        Question 1: / (1) / I.
+        + Multi-trigger insertion
+        + Context-aware positioning
         ```
         
         ### 🔑 API Key:
@@ -989,7 +1102,7 @@ def main():
     try:
         gemini_api = GeminiAPI(api_key)
         if enable_extraction and CV2_AVAILABLE:
-            image_extractor = SmartImageExtractor()
+            image_extractor = UniversalImageExtractor()
             image_extractor.min_area_ratio = min_area
             image_extractor.max_figures = max_figures
             image_extractor.min_width = min_size
@@ -1061,49 +1174,48 @@ def main():
                                         debug_img = image_extractor.create_debug_image(img_bytes, figures)
                                         all_debug_images.append((debug_img, page_num, figures))
                                     
-                                    st.write(f"🖼️ Trang {page_num}: Tách được {len(figures)} diagrams (lọc text blocks)")
+                                    st.write(f"🖼️ Trang {page_num}: Tách được {len(figures)} figures (enhanced)")
                                 except Exception as e:
                                     st.warning(f"⚠️ Không thể tách ảnh trang {page_num}: {str(e)}")
                             
-                            # Prompt cho Gemini
+                            # Prompt cho Gemini - Enhanced cho universal format
                             prompt_text = """
 Chuyển đổi TẤT CẢ nội dung trong ảnh thành văn bản thuần túy với định dạng CHÍNH XÁC.
 
-🎯 ĐỊNH DẠNG BẮT BUỘC:
+🎯 ĐỊNH DẠNG LINH HOẠT - Hỗ trợ mọi kiểu đề:
 
-1. **Trắc nghiệm 4 phương án - SỬ DỤNG A), B), C), D):**
-Câu X: [nội dung câu hỏi đầy đủ]
-A) [nội dung đáp án A đầy đủ]
-B) [nội dung đáp án B đầy đủ]
-C) [nội dung đáp án C đầy đủ]
-D) [nội dung đáp án D đầy đủ]
+1. **Trắc nghiệm 4 phương án:**
+   - Sử dụng A), B), C), D) cho đáp án 4 lựa chọn
+   
+2. **Trắc nghiệm đúng sai:**
+   - Sử dụng a), b), c), d) cho đáp án đúng/sai
+   
+3. **Câu hỏi tự luận:**
+   - Giữ nguyên format câu hỏi gốc
 
-2. **Trắc nghiệm đúng sai - SỬ DỤNG a), b), c), d):**
-Câu X: [nội dung câu hỏi nếu có]
-a) [nội dung đáp án a đầy đủ]
-b) [nội dung đáp án b đầy đủ]
-c) [nội dung đáp án c đầy đủ]
-d) [nội dung đáp án d đầy đủ]
+4. **Định dạng câu hỏi linh hoạt:**
+   - Câu X: / X. / Bài X: / (X) / Question X: / A.X:
+   - Giữ CHÍNH XÁC format gốc
 
-3. **Công thức toán học:**
-- CHỈ sử dụng: ${x^2 + y^2}$ cho công thức
-- VÍ DỤ: ${ABCD}$, ${A'C' \\perp BD}$, ${\\frac{a+b}{c-d}}$
+5. **Công thức toán học:**
+   - Sử dụng ${...}$ cho inline: ${x^2 + y^2}$  
+   - Sử dụng $${...}$$ cho display: $${\\frac{a+b}{c}}$$
 
-⚠️ YÊU CẦU:
-- TUYỆT ĐỐI sử dụng A), B), C), D) cho trắc nghiệm 4 phương án
-- TUYỆT ĐỐI sử dụng a), b), c), d) cho trắc nghiệm đúng sai
-- CHỈ văn bản thuần túy với công thức ${...}$
-- Giữ chính xác thứ tự và cấu trúc nội dung
-- Bao gồm tất cả text và công thức từ ảnh
+⚠️ YÊU CẦU CHẤT LƯỢNG:
+- Giữ CHÍNH XÁC thứ tự và cấu trúc
+- Bao gồm TẤT CẢ text, số, công thức
+- Không thay đổi format câu hỏi gốc
+- Chú ý context cho hình ảnh/bảng
+- Text thuần túy + công thức LaTeX
 """
                             
                             # Gọi API
                             try:
                                 latex_result = gemini_api.convert_to_latex(img_bytes, "image/png", prompt_text)
                                 if latex_result:
-                                    # Chèn ảnh vào văn bản CHÍNH XÁC
+                                    # Chèn ảnh vào văn bản với UNIVERSAL algorithm
                                     if enable_extraction and extracted_figures and CV2_AVAILABLE:
-                                        latex_result = image_extractor.insert_figures_into_text_precisely(
+                                        latex_result = image_extractor.insert_figures_into_text_universal(
                                             latex_result, extracted_figures, h, w
                                         )
                                     
@@ -1126,11 +1238,11 @@ d) [nội dung đáp án d đầy đủ]
                         
                         # Thống kê
                         if enable_extraction and CV2_AVAILABLE:
-                            st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} geometric diagrams (lọc text blocks)")
+                            st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} figures (universal algorithm)")
                             
                             # Debug images
                             if show_debug and all_debug_images:
-                                st.subheader("🔍 Debug - Chỉ Geometric Diagrams (lọc text blocks)")
+                                st.subheader("🔍 Debug - Universal Figure Detection")
                                 
                                 for debug_img, page_num, figures in all_debug_images:
                                     st.write(f"**Trang {page_num}:**")
@@ -1145,11 +1257,10 @@ d) [nội dung đáp án d đầy đủ]
                                                 
                                                 st.image(img_pil, caption=fig['name'], use_column_width=True)
                                                 st.write(f"**{fig['name']}**")
-                                                st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '📐 Diagram'}")
+                                                st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '📐 Hình'}")
                                                 st.write(f"🎯 Confidence: {fig['confidence']:.1f}%")
+                                                st.write(f"📊 Content Score: {fig.get('content_score', 0):.1f}")
                                                 st.write(f"📍 Vị trí Y: {fig['y_position']}px")
-                                                st.write(f"📐 Tỷ lệ: {fig['aspect_ratio']:.2f}")
-                                                st.write(f"🔍 Is Diagram: {fig.get('is_diagram', True)}")
                         
                         # Lưu session
                         st.session_state.pdf_latex_content = combined_latex
@@ -1251,37 +1362,33 @@ d) [nội dung đáp án d đầy đủ]
                                     debug_img = image_extractor.create_debug_image(image_bytes, figures)
                                     all_debug_images.append((debug_img, uploaded_image.name, figures))
                                 
-                                st.write(f"🖼️ {uploaded_image.name}: Tách được {len(figures)} diagrams (lọc text blocks)")
+                                st.write(f"🖼️ {uploaded_image.name}: Tách được {len(figures)} figures (enhanced)")
                             except Exception as e:
                                 st.warning(f"⚠️ Không thể tách ảnh {uploaded_image.name}: {str(e)}")
                         
                         prompt_text = """
 Chuyển đổi TẤT CẢ nội dung trong ảnh thành văn bản thuần túy với định dạng CHÍNH XÁC.
 
-🎯 ĐỊNH DẠNG BẮT BUỘC:
+🎯 ĐỊNH DẠNG LINH HOẠT - Hỗ trợ mọi kiểu đề:
 
-1. **Trắc nghiệm 4 phương án - SỬ DỤNG A), B), C), D):**
-Câu X: [nội dung câu hỏi đầy đủ]
-A) [nội dung đáp án A đầy đủ]
-B) [nội dung đáp án B đầy đủ]
-C) [nội dung đáp án C đầy đủ]
-D) [nội dung đáp án D đầy đủ]
+1. **Trắc nghiệm 4 phương án:**
+   - Sử dụng A), B), C), D) cho đáp án 4 lựa chọn
+   
+2. **Trắc nghiệm đúng sai:**
+   - Sử dụng a), b), c), d) cho đáp án đúng/sai
+   
+3. **Định dạng câu hỏi linh hoạt:**
+   - Câu X: / X. / Bài X: / (X) / Question X:
+   - Giữ CHÍNH XÁC format gốc
 
-2. **Trắc nghiệm đúng sai - SỬ DỤNG a), b), c), d):**
-Câu X: [nội dung câu hỏi nếu có]
-a) [nội dung đáp án a đầy đủ]
-b) [nội dung đáp án b đầy đủ]
-c) [nội dung đáp án c đầy đủ]
-d) [nội dung đáp án d đầy đủ]
-
-3. **Công thức toán học:**
-- CHỈ sử dụng: ${x^2 + y^2}$ cho công thức
-- VÍ DỤ: ${ABCD}$, ${A'C' \\perp BD}$
+4. **Công thức toán học:**
+   - ${x^2 + y^2}$ cho inline
+   - $${\\frac{a+b}{c}}$$ cho display
 
 ⚠️ YÊU CẦU:
-- TUYỆT ĐỐI sử dụng A), B), C), D) cho trắc nghiệm 4 phương án
-- TUYỆT ĐỐI sử dụng a), b), c), d) cho trắc nghiệm đúng sai
-- CHỈ văn bản thuần túy với công thức ${...}$
+- Giữ CHÍNH XÁC format gốc
+- Text thuần túy + công thức LaTeX
+- Bao gồm TẤT CẢ nội dung
 """
                         
                         try:
@@ -1290,7 +1397,7 @@ d) [nội dung đáp án d đầy đủ]
                             )
                             if latex_result:
                                 if enable_extraction and extracted_figures and CV2_AVAILABLE:
-                                    latex_result = image_extractor.insert_figures_into_text_precisely(
+                                    latex_result = image_extractor.insert_figures_into_text_universal(
                                         latex_result, extracted_figures, h, w
                                     )
                                 
@@ -1315,10 +1422,10 @@ d) [nội dung đáp án d đầy đủ]
                     
                     # Thống kê và debug
                     if enable_extraction and CV2_AVAILABLE:
-                        st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} geometric diagrams (lọc text blocks)")
+                        st.info(f"🖼️ Tổng cộng đã tách: {len(all_extracted_figures)} figures (universal algorithm)")
                         
                         if show_debug and all_debug_images:
-                            st.subheader("🔍 Debug - Chỉ Geometric Diagrams (lọc text blocks)")
+                            st.subheader("🔍 Debug - Universal Figure Detection")
                             
                             for debug_img, img_name, figures in all_debug_images:
                                 st.write(f"**{img_name}:**")
@@ -1333,11 +1440,10 @@ d) [nội dung đáp án d đầy đủ]
                                             
                                             st.image(img_pil, caption=fig['name'], use_column_width=True)
                                             st.write(f"**{fig['name']}**")
-                                            st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '📐 Diagram'}")
+                                            st.write(f"🏷️ Loại: {'📊 Bảng' if fig['is_table'] else '📐 Hình'}")
                                             st.write(f"🎯 Confidence: {fig['confidence']:.1f}%")
+                                            st.write(f"📊 Content Score: {fig.get('content_score', 0):.1f}")
                                             st.write(f"📍 Vị trí Y: {fig['y_position']}px")
-                                            st.write(f"📐 Tỷ lệ: {fig['aspect_ratio']:.2f}")
-                                            st.write(f"🔍 Is Diagram: {fig.get('is_diagram', True)}")
                     
                     # Lưu session
                     st.session_state.image_latex_content = combined_latex
@@ -1382,10 +1488,11 @@ d) [nội dung đáp án d đầy đủ]
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666;'>
-        <p>🎯 <strong>PRECISE & SMART VERSION:</strong> Lọc text blocks + Chèn chính xác 100%</p>
-        <p>📝 <strong>Smart Filtering:</strong> Chỉ tách geometric diagrams, bỏ qua text blocks màu</p>
-        <p>🔍 <strong>Precise Insertion:</strong> Ánh xạ figure-question + priority-based positioning</p>
-        <p>📄 <strong>Perfect Results:</strong> Hình đúng vị trí, không cắt nhầm bảng đáp án</p>
+        <p>🎯 <strong>UNIVERSAL & SMART VERSION:</strong> Hỗ trợ mọi loại đề + Chèn thông minh</p>
+        <p>🧠 <strong>AI-Powered Detection:</strong> Content-aware figure classification</p>
+        <p>✂️ <strong>Smart Cropping:</strong> Adaptive padding + Enhanced quality</p>
+        <p>📍 <strong>Universal Insertion:</strong> Multi-format question support</p>
+        <p>🔧 <strong>Enhanced Processing:</strong> Better algorithms cho mọi context</p>
     </div>
     """, unsafe_allow_html=True)
 
