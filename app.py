@@ -1978,7 +1978,7 @@ if __name__ == "__main__":
         # Dictionary mapping LaTeX symbols to Unicode
         latex_to_unicode = {
             '\\perp': '⊥',
-            '\\parallel': '∥',
+            '\\parallel': '∥', 
             '\\angle': '∠',
             '\\degree': '°',
             '^\\circ': '°',
@@ -2022,46 +2022,135 @@ if __name__ == "__main__":
             '\\int': '∫',
         }
         
-        # Xử lý fractions
-        fraction_pattern = r'\\frac\{([^}]+)\}\{([^}]+)\}'
-        latex_text = re.sub(fraction_pattern, r'(\1)/(\2)', latex_text)
+        # Xử lý fractions với regex an toàn
+        while '\\frac{' in latex_text:
+            start = latex_text.find('\\frac{')
+            if start == -1:
+                break
+            
+            # Tìm phần tử số
+            brace_count = 0
+            num_start = start + 6
+            num_end = num_start
+            
+            for i in range(num_start, len(latex_text)):
+                if latex_text[i] == '{':
+                    brace_count += 1
+                elif latex_text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        num_end = i
+                        break
+            
+            if brace_count != 0:
+                break
+            
+            numerator = latex_text[num_start:num_end]
+            
+            # Tìm phần mẫu số
+            if num_end + 1 < len(latex_text) and latex_text[num_end + 1] == '{':
+                brace_count = 0
+                den_start = num_end + 2
+                den_end = den_start
+                
+                for i in range(den_start, len(latex_text)):
+                    if latex_text[i] == '{':
+                        brace_count += 1
+                    elif latex_text[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            den_end = i
+                            break
+                
+                if brace_count == 0:
+                    denominator = latex_text[den_start:den_end]
+                    
+                    # Thay thế
+                    replacement = f'({numerator})/({denominator})'
+                    latex_text = latex_text[:start] + replacement + latex_text[den_end + 1:]
+                else:
+                    break
+            else:
+                break
         
-        # Xử lý subscripts và superscripts
-        subscript_pattern = r'_\{([^}]+)\}'
-        superscript_pattern = r'\^\{([^}]+)\}'
+        # Xử lý subscripts
+        subscript_map = {
+            '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', 
+            '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+            'a': 'ₐ', 'e': 'ₑ', 'i': 'ᵢ', 'o': 'ₒ', 'u': 'ᵤ',
+            'x': 'ₓ', 'n': 'ₙ', 'm': 'ₘ'
+        }
         
-        # Convert subscripts to Unicode (limited support)
-        subscript_map = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', 
-                        '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
-                        'a': 'ₐ', 'e': 'ₑ', 'i': 'ᵢ', 'o': 'ₒ', 'u': 'ᵤ',
-                        'x': 'ₓ', 'n': 'ₙ', 'm': 'ₘ'}
+        superscript_map = {
+            '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+            '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+            'n': 'ⁿ', 'i': 'ⁱ', '+': '⁺', '-': '⁻', '=': '⁼'
+        }
         
-        superscript_map = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
-                          '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
-                          'n': 'ⁿ', 'i': 'ⁱ', '+': '⁺', '-': '⁻', '=': '⁼'}
+        # Xử lý subscripts _{...}
+        while '_{' in latex_text:
+            start = latex_text.find('_{')
+            if start == -1:
+                break
+            
+            brace_count = 0
+            content_start = start + 2
+            content_end = content_start
+            
+            for i in range(content_start, len(latex_text)):
+                if latex_text[i] == '{':
+                    brace_count += 1
+                elif latex_text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        content_end = i
+                        break
+            
+            if brace_count == 0:
+                content = latex_text[content_start:content_end]
+                result = ''
+                for char in content:
+                    result += subscript_map.get(char, char)
+                
+                latex_text = latex_text[:start] + result + latex_text[content_end + 1:]
+            else:
+                break
         
-        def replace_subscript(match):
-            sub = match.group(1)
-            result = ''
-            for char in sub:
-                result += subscript_map.get(char, char)
-            return result
-        
-        def replace_superscript(match):
-            sup = match.group(1)
-            result = ''
-            for char in sup:
-                result += superscript_map.get(char, char)
-            return result
-        
-        latex_text = re.sub(subscript_pattern, replace_subscript, latex_text)
-        latex_text = re.sub(superscript_pattern, replace_superscript, latex_text)
+        # Xử lý superscripts ^{...}
+        while '^{' in latex_text:
+            start = latex_text.find('^{')
+            if start == -1:
+                break
+            
+            brace_count = 0
+            content_start = start + 2
+            content_end = content_start
+            
+            for i in range(content_start, len(latex_text)):
+                if latex_text[i] == '{':
+                    brace_count += 1
+                elif latex_text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        content_end = i
+                        break
+            
+            if brace_count == 0:
+                content = latex_text[content_start:content_end]
+                result = ''
+                for char in content:
+                    result += superscript_map.get(char, char)
+                
+                latex_text = latex_text[:start] + result + latex_text[content_end + 1:]
+            else:
+                break
         
         # Replace LaTeX symbols
-        for latex, unicode_char in latex_to_unicode.items():
-            latex_text = latex_text.replace(latex, unicode_char)
+        for latex_symbol, unicode_char in latex_to_unicode.items():
+            latex_text = latex_text.replace(latex_symbol, unicode_char)
         
-        # Clean up remaining LaTeX commands
+        # Clean up remaining LaTeX commands và braces
+        import re
         latex_text = re.sub(r'\\[a-zA-Z]+', '', latex_text)
         latex_text = re.sub(r'[{}]', '', latex_text)
         
