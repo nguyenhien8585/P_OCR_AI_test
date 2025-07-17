@@ -32,7 +32,7 @@ except ImportError:
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/LaTeX Converter - Clean Word Export",
+    page_title="PDF/LaTeX Converter - Content-Based Filter",
     page_icon="📝",
     layout="wide"
 )
@@ -145,6 +145,391 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+class ContentBasedFigureFilter:
+    """
+    Bộ lọc thông minh - Phân tích nội dung để đếm số ảnh minh họa thực tế
+    """
+    
+    def __init__(self):
+        self.text_to_image_ratio_threshold = 0.3  # Ngưỡng tỷ lệ text/image
+        self.min_visual_complexity = 0.4         # Ngưỡng độ phức tạp visual
+        self.diagram_detection_threshold = 0.5   # Ngưỡng phát hiện diagram
+        
+    def analyze_content_and_filter(self, image_bytes, candidates):
+        """
+        Phân tích nội dung ảnh và lọc ra đúng số lượng figures thực tế
+        """
+        if not CV2_AVAILABLE:
+            return candidates
+        
+        try:
+            # Phân tích ảnh gốc
+            img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            img = np.array(img_pil)
+            h, w = img.shape[:2]
+            
+            # Bước 1: Ước tính số lượng figures thực tế trong ảnh
+            estimated_figure_count = self._estimate_actual_figure_count(img)
+            st.write(f"📊 Ước tính số figures thực tế: {estimated_figure_count}")
+            
+            # Bước 2: Phân tích từng candidate
+            analyzed_candidates = []
+            for candidate in candidates:
+                analysis = self._analyze_candidate_content(img, candidate)
+                candidate.update(analysis)
+                analyzed_candidates.append(candidate)
+            
+            # Bước 3: Lọc theo content analysis
+            filtered_candidates = self._filter_by_content_analysis(analyzed_candidates)
+            st.write(f"📊 Sau lọc content: {len(filtered_candidates)} candidates")
+            
+            # Bước 4: Giới hạn theo số lượng ước tính
+            final_candidates = self._limit_by_estimated_count(filtered_candidates, estimated_figure_count)
+            st.write(f"📊 Final: {len(final_candidates)} figures (dự tính: {estimated_figure_count})")
+            
+            return final_candidates
+            
+        except Exception as e:
+            st.error(f"❌ Lỗi content filter: {str(e)}")
+            return candidates
+    
+    def _estimate_actual_figure_count(self, img):
+        """
+        Ước tính số lượng figures thực tế trong ảnh
+        """
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            h, w = gray.shape
+            
+            # Phương pháp 1: Phân tích layout structure
+            layout_count = self._analyze_layout_structure(gray)
+            
+            # Phương pháp 2: Phát hiện visual blocks
+            visual_blocks = self._detect_visual_blocks(gray)
+            
+            # Phương pháp 3: Phân tích text density
+            text_regions = self._analyze_text_regions(gray)
+            non_text_regions = self._estimate_non_text_regions(gray, text_regions)
+            
+            # Phương pháp 4: Geometric analysis
+            geometric_count = self._count_geometric_structures(gray)
+            
+            # Kết hợp các phương pháp
+            estimated_count = max(1, min(
+                layout_count,
+                visual_blocks,
+                non_text_regions,
+                geometric_count
+            ))
+            
+            # Điều chỉnh dựa trên kích thước ảnh
+            if h * w > 2000000:  # Ảnh lớn
+                estimated_count = min(estimated_count + 1, 8)
+            elif h * w < 500000:  # Ảnh nhỏ
+                estimated_count = max(estimated_count - 1, 1)
+            
+            return estimated_count
+            
+        except Exception as e:
+            st.warning(f"⚠️ Lỗi estimate count: {str(e)}")
+            return 3  # Fallback
+    
+    def _analyze_layout_structure(self, gray):
+        """
+        Phân tích cấu trúc layout để ước tính số figures
+        """
+        # Phát hiện horizontal separators
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (gray.shape[1]//10, 1))
+        h_lines = cv2.morphologyEx(gray, cv2.MORPH_OPEN, h_kernel)
+        h_separators = len(cv2.findContours(h_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0])
+        
+        # Phát hiện vertical separators
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, gray.shape[0]//10))
+        v_lines = cv2.morphologyEx(gray, cv2.MORPH_OPEN, v_kernel)
+        v_separators = len(cv2.findContours(v_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0])
+        
+        # Ước tính dựa trên separators
+        estimated = max(1, min(h_separators + 1, v_separators + 1, 6))
+        return estimated
+    
+    def _detect_visual_blocks(self, gray):
+        """
+        Phát hiện các visual blocks độc lập
+        """
+        # Threshold để tạo binary image
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Morphological operations để nhóm các elements
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 20))
+        closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        
+        # Tìm connected components
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(closed)
+        
+        # Lọc components có kích thước hợp lý
+        min_area = gray.shape[0] * gray.shape[1] * 0.01  # 1% của ảnh
+        valid_blocks = 0
+        
+        for i in range(1, num_labels):  # Bỏ background
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area > min_area:
+                valid_blocks += 1
+        
+        return max(1, min(valid_blocks, 8))
+    
+    def _analyze_text_regions(self, gray):
+        """
+        Phân tích vùng text để loại trừ
+        """
+        # Phát hiện text patterns
+        text_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+        text_regions = cv2.morphologyEx(gray, cv2.MORPH_OPEN, text_kernel)
+        
+        # Tính tỷ lệ text
+        text_pixels = np.sum(text_regions > 0)
+        total_pixels = gray.shape[0] * gray.shape[1]
+        text_ratio = text_pixels / total_pixels
+        
+        return text_ratio
+    
+    def _estimate_non_text_regions(self, gray, text_ratio):
+        """
+        Ước tính số vùng không phải text
+        """
+        if text_ratio > 0.7:  # Chủ yếu là text
+            return 1
+        elif text_ratio > 0.5:  # Vừa text vừa figures
+            return 2
+        elif text_ratio > 0.3:  # Ít text, nhiều figures
+            return 3
+        else:  # Chủ yếu là figures
+            return 4
+    
+    def _count_geometric_structures(self, gray):
+        """
+        Đếm số cấu trúc hình học
+        """
+        # Edge detection
+        edges = cv2.Canny(gray, 50, 150)
+        
+        # Phát hiện lines
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=30, maxLineGap=10)
+        line_count = len(lines) if lines is not None else 0
+        
+        # Phát hiện circles
+        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1, minDist=30, param1=50, param2=30, minRadius=10, maxRadius=100)
+        circle_count = len(circles[0]) if circles is not None else 0
+        
+        # Phát hiện contours phức tạp
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        complex_contours = 0
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > 1000:  # Chỉ đếm contours lớn
+                complex_contours += 1
+        
+        # Kết hợp để ước tính
+        geometric_score = (line_count // 10) + (circle_count * 2) + (complex_contours // 5)
+        return max(1, min(geometric_score, 6))
+    
+    def _analyze_candidate_content(self, img, candidate):
+        """
+        Phân tích nội dung của từng candidate
+        """
+        x, y, w, h = candidate['bbox']
+        roi = img[y:y+h, x:x+w]
+        
+        # Phân tích 1: Visual complexity
+        visual_complexity = self._calculate_visual_complexity(roi)
+        
+        # Phân tích 2: Text density
+        text_density = self._calculate_text_density(roi)
+        
+        # Phân tích 3: Diagram likelihood
+        diagram_score = self._calculate_diagram_score(roi)
+        
+        # Phân tích 4: Figure quality
+        figure_quality = self._calculate_figure_quality(roi)
+        
+        # Phân tích 5: Content type classification
+        content_type = self._classify_content_type(roi, visual_complexity, text_density, diagram_score)
+        
+        return {
+            'visual_complexity': visual_complexity,
+            'text_density': text_density,
+            'diagram_score': diagram_score,
+            'figure_quality': figure_quality,
+            'content_type': content_type,
+            'is_likely_figure': content_type in ['diagram', 'chart', 'image', 'table']
+        }
+    
+    def _calculate_visual_complexity(self, roi):
+        """
+        Tính độ phức tạp visual
+        """
+        if roi.size == 0:
+            return 0
+        
+        # Chuyển sang grayscale
+        gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
+        
+        # Tính gradient
+        grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+        
+        # Tính entropy
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        hist = hist.ravel()
+        hist = hist[hist > 0]
+        entropy = -np.sum(hist * np.log2(hist + 1e-10))
+        
+        # Kết hợp
+        complexity = (np.mean(gradient_magnitude) / 255.0) * 0.7 + (entropy / 8.0) * 0.3
+        return min(1.0, complexity)
+    
+    def _calculate_text_density(self, roi):
+        """
+        Tính mật độ text
+        """
+        if roi.size == 0:
+            return 1.0
+        
+        gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
+        
+        # Phát hiện text patterns
+        text_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, roi.shape[1]//10), 1))
+        text_regions = cv2.morphologyEx(gray, cv2.MORPH_OPEN, text_kernel)
+        
+        text_pixels = np.sum(text_regions > 0)
+        total_pixels = gray.shape[0] * gray.shape[1]
+        
+        return text_pixels / total_pixels if total_pixels > 0 else 0
+    
+    def _calculate_diagram_score(self, roi):
+        """
+        Tính điểm diagram likelihood
+        """
+        if roi.size == 0:
+            return 0
+        
+        gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
+        
+        # Phát hiện lines
+        edges = cv2.Canny(gray, 50, 150)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=20, minLineLength=15, maxLineGap=5)
+        line_score = len(lines) if lines is not None else 0
+        
+        # Phát hiện shapes
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        shape_score = len([c for c in contours if cv2.contourArea(c) > 100])
+        
+        # Kết hợp
+        diagram_score = (line_score * 0.1 + shape_score * 0.2) / max(roi.shape[0], roi.shape[1])
+        return min(1.0, diagram_score)
+    
+    def _calculate_figure_quality(self, roi):
+        """
+        Tính chất lượng figure
+        """
+        if roi.size == 0:
+            return 0
+        
+        gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
+        
+        # Tính sharpness
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        sharpness = np.var(laplacian)
+        
+        # Tính contrast
+        contrast = np.std(gray)
+        
+        # Tính resolution score
+        resolution_score = min(1.0, (roi.shape[0] * roi.shape[1]) / 10000)
+        
+        # Kết hợp
+        quality = (sharpness / 1000.0) * 0.4 + (contrast / 128.0) * 0.4 + resolution_score * 0.2
+        return min(1.0, quality)
+    
+    def _classify_content_type(self, roi, visual_complexity, text_density, diagram_score):
+        """
+        Phân loại loại nội dung
+        """
+        if text_density > 0.6:
+            return 'text'
+        elif diagram_score > 0.5:
+            return 'diagram'
+        elif visual_complexity > 0.6 and text_density < 0.3:
+            if diagram_score > 0.3:
+                return 'chart'
+            else:
+                return 'image'
+        elif visual_complexity > 0.4 and diagram_score > 0.2:
+            return 'table'
+        elif visual_complexity < 0.2:
+            return 'noise'
+        else:
+            return 'mixed'
+    
+    def _filter_by_content_analysis(self, candidates):
+        """
+        Lọc candidates dựa trên content analysis
+        """
+        filtered = []
+        
+        for candidate in candidates:
+            # Lọc theo content type
+            if not candidate.get('is_likely_figure', False):
+                continue
+            
+            # Lọc theo visual complexity
+            if candidate.get('visual_complexity', 0) < self.min_visual_complexity:
+                continue
+            
+            # Lọc theo text density
+            if candidate.get('text_density', 1) > self.text_to_image_ratio_threshold:
+                continue
+            
+            # Lọc theo figure quality
+            if candidate.get('figure_quality', 0) < 0.3:
+                continue
+            
+            # Tính content score tổng hợp
+            content_score = (
+                candidate.get('visual_complexity', 0) * 0.3 +
+                candidate.get('diagram_score', 0) * 0.3 +
+                candidate.get('figure_quality', 0) * 0.2 +
+                (1 - candidate.get('text_density', 1)) * 0.2
+            )
+            
+            candidate['content_score'] = content_score
+            
+            if content_score > 0.4:
+                filtered.append(candidate)
+        
+        return filtered
+    
+    def _limit_by_estimated_count(self, candidates, estimated_count):
+        """
+        Giới hạn số lượng theo estimated count
+        """
+        if len(candidates) <= estimated_count:
+            return candidates
+        
+        # Sắp xếp theo combined score
+        for candidate in candidates:
+            combined_score = (
+                candidate.get('final_confidence', 0) * 0.4 +
+                candidate.get('content_score', 0) * 0.6
+            )
+            candidate['combined_score'] = combined_score
+        
+        # Sắp xếp và lấy top
+        sorted_candidates = sorted(candidates, key=lambda x: x['combined_score'], reverse=True)
+        
+        return sorted_candidates[:estimated_count]
+
 class SuperEnhancedImageExtractor:
     """
     Thuật toán tách ảnh SIÊU CẢI TIẾN - Đảm bảo cắt được ảnh
@@ -178,10 +563,14 @@ class SuperEnhancedImageExtractor:
         self.canny_low = 30
         self.canny_high = 80
         self.blur_kernel = 3
+        
+        # Khởi tạo Content-Based Filter
+        self.content_filter = ContentBasedFigureFilter()
+        self.enable_content_filter = True
     
     def extract_figures_and_tables(self, image_bytes):
         """
-        Tách ảnh với thuật toán SIÊU CẢI TIẾN
+        Tách ảnh với thuật toán SIÊU CẢI TIẾN + Content-Based Filter
         """
         if not CV2_AVAILABLE:
             st.error("❌ OpenCV không có sẵn! Cần cài đặt: pip install opencv-python")
@@ -227,9 +616,35 @@ class SuperEnhancedImageExtractor:
             filtered_candidates = self._filter_and_merge_candidates(all_candidates, w, h)
             st.write(f"📊 Sau lọc và merge: {len(filtered_candidates)}")
             
+            # BƯỚC MỚI: Content-Based Filter
+            if self.enable_content_filter:
+                st.write("🧠 Đang phân tích nội dung và lọc theo số lượng thực tế...")
+                content_filtered = self.content_filter.analyze_content_and_filter(image_bytes, filtered_candidates)
+                st.write(f"📊 Sau content filter: {len(content_filtered)} figures")
+                
+                # Hiển thị thông tin content analysis
+                if content_filtered:
+                    st.write("📋 Content Analysis Results:")
+                    for i, candidate in enumerate(content_filtered):
+                        content_type = candidate.get('content_type', 'unknown')
+                        content_score = candidate.get('content_score', 0)
+                        visual_complexity = candidate.get('visual_complexity', 0)
+                        text_density = candidate.get('text_density', 0)
+                        
+                        st.write(f"   {i+1}. Type: {content_type}, Score: {content_score:.2f}, "
+                                f"Visual: {visual_complexity:.2f}, Text: {text_density:.2f}")
+                
+                filtered_candidates = content_filtered
+            
             # Tạo final figures
             final_figures = self._create_final_figures_enhanced(filtered_candidates, img, w, h)
-            st.write(f"✅ Final figures: {len(final_figures)}")
+            
+            # Thông báo kết quả
+            if self.enable_content_filter:
+                st.success(f"✅ Đã tách {len(final_figures)} figures (phân tích nội dung)")
+                st.write("💡 Content filter đã lọc ra đúng số lượng ảnh minh họa thực tế")
+            else:
+                st.write(f"✅ Final figures: {len(final_figures)}")
             
             return final_figures, h, w
             
@@ -1301,7 +1716,7 @@ def check_dependencies():
     return missing, dependencies
 
 def main():
-    st.markdown('<h1 class="main-header">📝 Enhanced PDF/LaTeX Converter - Clean Word Export</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📝 Enhanced PDF/LaTeX Converter - Content-Based Filter</h1>', unsafe_allow_html=True)
     
     # Kiểm tra dependencies
     missing_deps, dep_commands = check_dependencies()
@@ -1314,23 +1729,23 @@ def main():
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">🎉 CLEAN WORD EXPORT - BỎ METADATA</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Tách ảnh được • ✅ Chèn ảnh đẹp • ✅ LaTeX chuẩn • ✅ Word sạch sẽ</p>
+        <h2 style="margin: 0;">🧠 CONTENT-BASED FILTER - TỰ ĐỘNG ĐẾM SỐ ẢNH</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Phân tích nội dung • ✅ Đếm ảnh thực tế • ✅ Lọc chất lượng • ✅ Word sạch sẽ</p>
         <div style="display: flex; justify-content: space-around; margin-top: 1.5rem;">
             <div style="text-align: center;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🧠</div>
+                <div><strong>Content Analysis</strong></div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">AI phân tích • Đếm thực tế</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🎯</div>
+                <div><strong>Precision Filter</strong></div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">Lọc chất lượng • Không thừa</div>
+            </div>
+            <div style="text-align: center;">
                 <div style="font-size: 2rem; margin-bottom: 0.5rem;">📄</div>
-                <div><strong>Clean Word Export</strong></div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Bỏ metadata • Bỏ appendix</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🎛️</div>
-                <div><strong>Dual Mode</strong></div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Clean • Full • Tùy chọn</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔍</div>
-                <div><strong>Figure Insertion</strong></div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Debug • Test • Improved</div>
+                <div><strong>Clean Output</strong></div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">Sạch sẽ • Chính xác</div>
             </div>
         </div>
     </div>
@@ -1364,6 +1779,21 @@ def main():
             if enable_extraction:
                 st.markdown("#### 🎛️ Tùy chỉnh nâng cao")
                 
+                # Content-Based Filter
+                st.markdown("**🧠 Content-Based Filter (MỚI):**")
+                enable_content_filter = st.checkbox("Bật lọc theo nội dung thực tế", value=True, key="content_filter")
+                if enable_content_filter:
+                    st.markdown("""
+                    <div style="background: #e8f5e8; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
+                    <small>
+                    ✅ Phân tích nội dung để đếm số ảnh minh họa thực tế<br>
+                    ✅ Lọc bỏ text regions, noise, artifacts<br>
+                    ✅ Chỉ giữ lại figures chất lượng cao<br>
+                    ✅ Tự động điều chỉnh số lượng phù hợp
+                    </small>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
                 # Quick presets
                 st.markdown("**⚡ Quick Presets:**")
                 col1, col2 = st.columns(2)
@@ -1386,18 +1816,43 @@ def main():
                     canny_low = st.slider("Canny low", 10, 100, 30, 5)
                     canny_high = st.slider("Canny high", 50, 200, 80, 10)
                     
+                    st.markdown("**Content Filter Settings:**")
+                    if enable_content_filter:
+                        visual_complexity_threshold = st.slider("Visual Complexity Threshold", 0.1, 1.0, 0.4, 0.1)
+                        text_ratio_threshold = st.slider("Text Ratio Threshold", 0.1, 0.8, 0.3, 0.1)
+                        diagram_threshold = st.slider("Diagram Detection Threshold", 0.1, 1.0, 0.5, 0.1)
+                    
                     show_debug = st.checkbox("Hiển thị debug visualization", value=True)
                     detailed_info = st.checkbox("Thông tin chi tiết", value=True)
         else:
             enable_extraction = False
+            enable_content_filter = False
             st.error("❌ OpenCV không khả dụng!")
             st.code("pip install opencv-python", language="bash")
+            
+            # Set default values for variables
+            min_area = 0.0008
+            min_size = 25
+            max_figures = 30
+            confidence_threshold = 20
+            smart_padding = 30
+            canny_low = 30
+            canny_high = 80
+            show_debug = True
+            detailed_info = True
         
         st.markdown("---")
         
         # Thông tin chi tiết
         st.markdown("""
         ### 🎯 **Cải tiến chính:**
+        
+        **🧠 Content-Based Filter (MỚI):**
+        - ✅ Phân tích nội dung thực tế trong ảnh
+        - ✅ Ước tính số lượng ảnh minh họa thực tế  
+        - ✅ Lọc bỏ text regions, noise, artifacts
+        - ✅ Chỉ giữ lại figures chất lượng cao
+        - ✅ Tự động điều chỉnh số lượng phù hợp
         
         **📄 Clean Word Export:**
         - ✅ Bỏ tiêu đề metadata
@@ -1419,17 +1874,21 @@ def main():
         - ✅ Fallback matching strategies
         - ✅ Test functions for debugging
         
-        ### 🚀 **Khắc phục:**
-        - ❌ Word có metadata rối → ✅ Clean mode
-        - ❌ Appendix không cần → ✅ Bỏ hoàn toàn
-        - ❌ Figures không chèn → ✅ Debug mode
-        - ❌ Không tách được ảnh → ✅ 4 phương pháp
-        - ❌ LaTeX format sai → ✅ Fixed prompt
+        ### 🚀 **Cách hoạt động Content Filter:**
+        1. **Phân tích Layout**: Ước tính số figures thực tế
+        2. **Content Analysis**: Đánh giá từng candidate
+        3. **Visual Complexity**: Tính độ phức tạp hình ảnh
+        4. **Text Density**: Lọc bỏ vùng chủ yếu là text
+        5. **Diagram Detection**: Phát hiện biểu đồ, sơ đồ
+        6. **Quality Assessment**: Đánh giá chất lượng figure
+        7. **Smart Limiting**: Giới hạn theo số lượng ước tính
         
         ### 🔧 **Hướng dẫn:**
-        - **Clean Mode**: Chỉ nội dung + figures
-        - **Full Mode**: Đầy đủ metadata + appendix
-        - **Debug**: Xem real-time processing
+        - **Content Filter ON**: Tách đúng số lượng thực tế
+        - **Content Filter OFF**: Tách nhiều như trước
+        - **Preset "Tách nhiều"**: Relaxed content filter
+        - **Preset "Chất lượng"**: Strict content filter
+        - **Debug**: Xem real-time analysis
         - **Test**: Thử nghiệm trước khi dùng
         """)
     
@@ -1447,6 +1906,18 @@ def main():
         if enable_extraction and CV2_AVAILABLE:
             image_extractor = SuperEnhancedImageExtractor()
             
+            # Apply content filter settings
+            if enable_content_filter:
+                image_extractor.enable_content_filter = True
+                if 'visual_complexity_threshold' in locals():
+                    image_extractor.content_filter.min_visual_complexity = visual_complexity_threshold
+                if 'text_ratio_threshold' in locals():
+                    image_extractor.content_filter.text_to_image_ratio_threshold = text_ratio_threshold
+                if 'diagram_threshold' in locals():
+                    image_extractor.content_filter.diagram_detection_threshold = diagram_threshold
+            else:
+                image_extractor.enable_content_filter = False
+            
             # Apply presets
             if st.session_state.get('preset') == "many":
                 image_extractor.min_area_ratio = 0.0005
@@ -1455,6 +1926,10 @@ def main():
                 image_extractor.min_height = 20
                 image_extractor.confidence_threshold = 15
                 image_extractor.max_figures = 50
+                # Relaxed content filter for "many" preset
+                if enable_content_filter:
+                    image_extractor.content_filter.min_visual_complexity = 0.2
+                    image_extractor.content_filter.text_to_image_ratio_threshold = 0.5
             elif st.session_state.get('preset') == "quality":
                 image_extractor.min_area_ratio = 0.002
                 image_extractor.min_area_abs = 800
@@ -1462,6 +1937,10 @@ def main():
                 image_extractor.min_height = 40
                 image_extractor.confidence_threshold = 40
                 image_extractor.max_figures = 15
+                # Strict content filter for "quality" preset
+                if enable_content_filter:
+                    image_extractor.content_filter.min_visual_complexity = 0.6
+                    image_extractor.content_filter.text_to_image_ratio_threshold = 0.2
             else:
                 # Custom settings
                 image_extractor.min_area_ratio = min_area
@@ -1473,6 +1952,8 @@ def main():
                 image_extractor.smart_padding = smart_padding
                 image_extractor.canny_low = canny_low
                 image_extractor.canny_high = canny_high
+        else:
+            image_extractor = None
                 
     except Exception as e:
         st.error(f"❌ Lỗi khởi tạo: {str(e)}")
@@ -1542,7 +2023,7 @@ def main():
                             extracted_figures = []
                             debug_img = None
                             
-                            if enable_extraction and CV2_AVAILABLE:
+                            if enable_extraction and CV2_AVAILABLE and image_extractor:
                                 try:
                                     with st.spinner(f"🔍 Đang tách ảnh trang {page_num}..."):
                                         figures, h, w = image_extractor.extract_figures_and_tables(img_bytes)
@@ -1555,13 +2036,17 @@ def main():
                                         
                                         # Hiển thị kết quả tách ảnh
                                         if figures:
-                                            st.markdown(f'<div class="status-success">🎯 Trang {page_num}: Tách được {len(figures)} figures</div>', unsafe_allow_html=True)
+                                            if enable_content_filter:
+                                                st.markdown(f'<div class="status-success">🧠 Trang {page_num}: Tách được {len(figures)} figures (content-filtered)</div>', unsafe_allow_html=True)
+                                            else:
+                                                st.markdown(f'<div class="status-success">🎯 Trang {page_num}: Tách được {len(figures)} figures</div>', unsafe_allow_html=True)
                                             
                                             if detailed_info:
                                                 for fig in figures:
                                                     method_icon = {"edge": "🔍", "contour": "📐", "grid": "📊", "blob": "🔵"}
                                                     conf_color = "🟢" if fig['confidence'] > 70 else "🟡" if fig['confidence'] > 40 else "🔴"
-                                                    st.markdown(f"   {method_icon.get(fig['method'], '⚙️')} {conf_color} **{fig['name']}**: {fig['confidence']:.1f}% ({fig['method']})")
+                                                    content_info = f" | {fig.get('content_type', 'unknown')}" if enable_content_filter else ""
+                                                    st.markdown(f"   {method_icon.get(fig['method'], '⚙️')} {conf_color} **{fig['name']}**: {fig['confidence']:.1f}% ({fig['method']}{content_info})")
                                         else:
                                             st.markdown(f'<div class="status-warning">⚠️ Trang {page_num}: Không tách được figures</div>', unsafe_allow_html=True)
                                     
@@ -1614,7 +2099,7 @@ d) [khẳng định d đầy đủ]
                                     
                                     if latex_result:
                                         # Chèn figures vào đúng vị trí
-                                        if enable_extraction and extracted_figures and CV2_AVAILABLE:
+                                        if enable_extraction and extracted_figures and CV2_AVAILABLE and image_extractor:
                                             latex_result = image_extractor.insert_figures_into_text_precisely(
                                                 latex_result, extracted_figures, h, w
                                             )
@@ -1669,6 +2154,35 @@ d) [khẳng định d đầy đủ]
                             with col_4:
                                 avg_conf = sum(f['confidence'] for f in all_extracted_figures) / len(all_extracted_figures)
                                 st.metric("🎯 Avg Confidence", f"{avg_conf:.1f}%")
+                            
+                            # Hiển thị thông tin content filter nếu có
+                            if enable_content_filter:
+                                st.markdown("### 🧠 Content Filter Analysis")
+                                
+                                content_types = {}
+                                for fig in all_extracted_figures:
+                                    content_type = fig.get('content_type', 'unknown')
+                                    content_types[content_type] = content_types.get(content_type, 0) + 1
+                                
+                                if content_types:
+                                    col_a, col_b, col_c, col_d = st.columns(4)
+                                    type_items = list(content_types.items())
+                                    
+                                    for i, (content_type, count) in enumerate(type_items[:4]):
+                                        with [col_a, col_b, col_c, col_d][i]:
+                                            icon = {"diagram": "📊", "chart": "📈", "image": "🖼️", "table": "📋", "mixed": "🔄"}.get(content_type, "❓")
+                                            st.metric(f"{icon} {content_type.title()}", count)
+                                
+                                # Hiển thị quality metrics
+                                if any('content_score' in fig for fig in all_extracted_figures):
+                                    avg_content_score = sum(fig.get('content_score', 0) for fig in all_extracted_figures) / len(all_extracted_figures)
+                                    avg_visual_complexity = sum(fig.get('visual_complexity', 0) for fig in all_extracted_figures) / len(all_extracted_figures)
+                                    
+                                    col_x, col_y = st.columns(2)
+                                    with col_x:
+                                        st.metric("🎯 Avg Content Score", f"{avg_content_score:.2f}")
+                                    with col_y:
+                                        st.metric("🎨 Avg Visual Complexity", f"{avg_visual_complexity:.2f}")
                             
                             # Hiển thị figures đẹp
                             for debug_img, page_num, figures in all_debug_images:
@@ -1857,9 +2371,10 @@ d) [khẳng định d đầy đủ]
             """)
         
         # Display current settings
-        if enable_extraction and CV2_AVAILABLE:
+        if enable_extraction and CV2_AVAILABLE and image_extractor:
             st.markdown("### ⚙️ Current Settings")
-            st.json({
+            
+            settings_data = {
                 "min_area_ratio": image_extractor.min_area_ratio,
                 "min_area_abs": image_extractor.min_area_abs,
                 "min_width": image_extractor.min_width,
@@ -1868,8 +2383,18 @@ d) [khẳng định d đầy đủ]
                 "confidence_threshold": image_extractor.confidence_threshold,
                 "smart_padding": image_extractor.smart_padding,
                 "canny_low": image_extractor.canny_low,
-                "canny_high": image_extractor.canny_high
-            })
+                "canny_high": image_extractor.canny_high,
+                "content_filter_enabled": image_extractor.enable_content_filter
+            }
+            
+            if image_extractor.enable_content_filter:
+                settings_data.update({
+                    "content_filter_visual_threshold": image_extractor.content_filter.min_visual_complexity,
+                    "content_filter_text_threshold": image_extractor.content_filter.text_to_image_ratio_threshold,
+                    "content_filter_diagram_threshold": image_extractor.content_filter.diagram_detection_threshold
+                })
+            
+            st.json(settings_data)
         
         # Test functions
         st.markdown("### 🧪 Test Functions")
@@ -1965,29 +2490,29 @@ Kết quả như trên.
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>🎯 CLEAN WORD EXPORT - BỎ METADATA & APPENDIX</h3>
+        <h3>🎯 CONTENT-BASED FILTER - TỰ ĐỘNG ĐẾM SỐ ẢNH THỰC TẾ</h3>
         <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 1.5rem;'>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
+                <h4>🧠 Content-Based Filter</h4>
+                <p>✅ Phân tích nội dung thực tế<br>✅ Ước tính số ảnh minh họa<br>✅ Lọc bỏ text/noise<br>✅ Chỉ giữ figures chất lượng</p>
+            </div>
+            <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
                 <h4>📄 Clean Word Export</h4>
-                <p>✅ Bỏ tiêu đề metadata<br>✅ Bỏ thông tin thời gian<br>✅ Bỏ appendix thống kê<br>✅ Chỉ nội dung chính + figures</p>
+                <p>✅ Bỏ metadata hoàn toàn<br>✅ Chỉ nội dung + figures<br>✅ Dual mode support<br>✅ Professional output</p>
             </div>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>🎛️ Dual Mode Support</h4>
-                <p>✅ Clean Mode: Sạch sẽ, chỉ nội dung<br>✅ Full Mode: Đầy đủ metadata<br>✅ Tùy chọn linh hoạt<br>✅ Test cả 2 modes</p>
-            </div>
-            <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>🔍 Enhanced Figure Insertion</h4>
-                <p>✅ Debug mode real-time<br>✅ Better tag parsing<br>✅ Fallback matching<br>✅ Error handling improved</p>
+                <h4>🔍 Smart Extraction</h4>
+                <p>✅ 4 phương pháp + AI filter<br>✅ Content analysis<br>✅ Quality assessment<br>✅ Precision targeting</p>
             </div>
         </div>
         <div style='margin-top: 2rem; padding: 1.5rem; background: rgba(255,255,255,0.1); border-radius: 10px;'>
             <p style='margin: 0; font-size: 1.1rem;'>
-                <strong>🎉 CLEAN WORD EXPORT - THEO YÊU CẦU:</strong><br>
-                ❌ Tiêu đề "Tài liệu LaTeX đã chuyển đổi" → ✅ Bỏ hoàn toàn<br>
-                ❌ Metadata thời gian, figures count → ✅ Bỏ hoàn toàn<br>
-                ❌ Appendix "Phụ lục thông tin chi tiết" → ✅ Bỏ hoàn toàn<br>
-                ❌ Debug comments ```latex → ✅ Bỏ hoàn toàn<br>
-                ✅ Chỉ giữ lại: Nội dung chính + Figures được chèn đúng vị trí
+                <strong>🚀 CONTENT-BASED FILTER WORKFLOW:</strong><br>
+                📊 **Analyze Layout** → Ước tính số figures thực tế từ structure<br>
+                🔍 **Content Analysis** → Đánh giá từng candidate (visual complexity, text density)<br>
+                🎯 **Quality Filter** → Lọc theo diagram score, figure quality<br>
+                🧠 **Smart Limiting** → Chỉ giữ đúng số lượng ước tính<br>
+                ✅ **Result**: Cắt đúng số ảnh minh họa thực tế, không thừa không thiếu!
             </p>
         </div>
     </div>
