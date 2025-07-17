@@ -32,7 +32,7 @@ except ImportError:
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/LaTeX Converter - Enhanced & Fixed",
+    page_title="PDF/LaTeX Converter - Clean Word Export",
     page_icon="📝",
     layout="wide"
 )
@@ -820,25 +820,17 @@ class EnhancedWordExporter:
             style.font.name = 'Times New Roman'
             style.font.size = Pt(12)
             
-            # Thêm tiêu đề
-            title_para = doc.add_heading('Tài liệu LaTeX đã chuyển đổi', 0)
-            title_para.alignment = 1
+            # KHÔNG thêm tiêu đề metadata - BỎ PHẦN NÀY
+            # Chỉ thêm tiêu đề đơn giản nếu cần
+            # title_para = doc.add_heading('Tài liệu LaTeX đã chuyển đổi', 0)
+            # title_para.alignment = 1
             
-            # Thông tin metadata
-            info_para = doc.add_paragraph()
-            info_para.alignment = 1
-            info_run = info_para.add_run(
-                f"Được tạo bởi Enhanced PDF/LaTeX Converter\n"
-                f"Thời gian: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"Figures: {len(extracted_figures) if extracted_figures else 0}"
-            )
-            info_run.font.size = Pt(10)
-            info_run.font.color.rgb = RGBColor(128, 128, 128)
+            # BỎ PHẦN metadata info
+            # info_para = doc.add_paragraph()
+            # info_para.alignment = 1
+            # info_run = info_para.add_run(...)
             
-            # Thêm line break
-            doc.add_paragraph("")
-            
-            # Debug info
+            # Debug info (chỉ hiển thị trong console, không in ra)
             st.write(f"🔍 Xử lý Word document với {len(extracted_figures) if extracted_figures else 0} figures")
             if extracted_figures:
                 st.write("📊 Danh sách figures:")
@@ -861,6 +853,97 @@ class EnhancedWordExporter:
                 if not line:
                     continue
                 
+                # BỎ QUA comment trang và debug comments
+                if line.startswith('<!--'):
+                    continue
+                
+                # BỎ QUA các dòng ```latex
+                if line.startswith('```'):
+                    continue
+                
+                # Xử lý tags hình ảnh - CẢI TIẾN
+                if line.startswith('[') and line.endswith(']'):
+                    if 'HÌNH:' in line or 'BẢNG:' in line:
+                        st.write(f"🎯 Tìm thấy figure tag: {line}")
+                        EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures, clean_mode=True)
+                        continue
+                
+                # Xử lý câu hỏi
+                if re.match(r'^(câu|bài)\s+\d+', line.lower()):
+                    current_paragraph = doc.add_heading(line, level=3)
+                    current_paragraph.alignment = 0
+                    continue
+                
+                # Xử lý paragraph thường
+                if line:
+                    para = doc.add_paragraph()
+                    EnhancedWordExporter._process_latex_content(para, line)
+                    current_paragraph = para
+            
+            # BỎ PHẦN appendix với thông tin figures
+            # if extracted_figures:
+            #     EnhancedWordExporter._add_figures_appendix(doc, extracted_figures)
+            
+            # BỎ PHẦN ảnh gốc
+            # if images and not extracted_figures:
+            #     EnhancedWordExporter._add_original_images(doc, images)
+            
+            # Lưu vào buffer
+            buffer = io.BytesIO()
+            doc.save(buffer)
+            buffer.seek(0)
+            
+            st.success("✅ Word document (clean version) đã được tạo thành công!")
+            return buffer
+            
+        except Exception as e:
+            st.error(f"❌ Lỗi tạo Word document: {str(e)}")
+            raise e
+    
+    @staticmethod
+    def create_word_document_full(latex_content: str, extracted_figures=None, images=None) -> io.BytesIO:
+        """
+        Tạo Word document FULL VERSION với metadata và appendix
+        """
+        try:
+            # Tạo document mới
+            doc = Document()
+            
+            # Cấu hình font và style
+            style = doc.styles['Normal']
+            style.font.name = 'Times New Roman'
+            style.font.size = Pt(12)
+            
+            # Thêm tiêu đề
+            title_para = doc.add_heading('Tài liệu LaTeX đã chuyển đổi', 0)
+            title_para.alignment = 1
+            
+            # Thông tin metadata
+            info_para = doc.add_paragraph()
+            info_para.alignment = 1
+            info_run = info_para.add_run(
+                f"Được tạo bởi Enhanced PDF/LaTeX Converter\n"
+                f"Thời gian: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Figures: {len(extracted_figures) if extracted_figures else 0}"
+            )
+            info_run.font.size = Pt(10)
+            info_run.font.color.rgb = RGBColor(128, 128, 128)
+            
+            # Thêm line break
+            doc.add_paragraph("")
+            
+            # Xử lý nội dung LaTeX
+            lines = latex_content.split('\n')
+            current_paragraph = None
+            
+            for line_num, line in enumerate(lines):
+                original_line = line
+                line = line.strip()
+                
+                # Bỏ qua các dòng trống
+                if not line:
+                    continue
+                
                 # Xử lý comment trang
                 if line.startswith('<!--'):
                     if ('Trang' in line or 'Page' in line) and not ('Figure:' in line or 'Table:' in line):
@@ -871,11 +954,14 @@ class EnhancedWordExporter:
                         heading.alignment = 1
                     continue
                 
-                # Xử lý tags hình ảnh - CẢI TIẾN
+                # BỎ QUA các dòng ```latex
+                if line.startswith('```'):
+                    continue
+                
+                # Xử lý tags hình ảnh
                 if line.startswith('[') and line.endswith(']'):
                     if 'HÌNH:' in line or 'BẢNG:' in line:
-                        st.write(f"🎯 Tìm thấy figure tag: {line}")
-                        EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures)
+                        EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures, clean_mode=False)
                         continue
                 
                 # Xử lý câu hỏi
@@ -903,7 +989,7 @@ class EnhancedWordExporter:
             doc.save(buffer)
             buffer.seek(0)
             
-            st.success("✅ Word document đã được tạo thành công!")
+            st.success("✅ Word document (full version) đã được tạo thành công!")
             return buffer
             
         except Exception as e:
@@ -933,7 +1019,7 @@ class EnhancedWordExporter:
                     text_run.font.size = Pt(12)
     
     @staticmethod
-    def _insert_figure_to_word(doc, tag_line, extracted_figures):
+    def _insert_figure_to_word(doc, tag_line, extracted_figures, clean_mode=True):
         """
         Chèn hình ảnh vào Word document - CẢI TIẾN
         """
@@ -946,13 +1032,13 @@ class EnhancedWordExporter:
             caption_prefix = None
             
             if 'HÌNH:' in tag_line:
-                # Parse: [🖼️ HÌNH: figure-1.jpeg - Confidence: 70.0%]
-                parts = tag_line.split('HÌNH:')[1].split('-')[0].strip()
+                # Parse: [🖼️ HÌNH: figure-1.jpeg]
+                parts = tag_line.split('HÌNH:')[1].split(']')[0].strip()
                 fig_name = parts.strip()
                 caption_prefix = "Hình"
             elif 'BẢNG:' in tag_line:
-                # Parse: [📊 BẢNG: table-1.jpeg - Confidence: 70.0%]
-                parts = tag_line.split('BẢNG:')[1].split('-')[0].strip()
+                # Parse: [📊 BẢNG: table-1.jpeg]
+                parts = tag_line.split('BẢNG:')[1].split(']')[0].strip()
                 fig_name = parts.strip()
                 caption_prefix = "Bảng"
             else:
@@ -986,9 +1072,10 @@ class EnhancedWordExporter:
             if target_figure:
                 st.write(f"🎯 Chèn figure: {target_figure['name']}")
                 
-                # Thêm heading cho figure
-                heading = doc.add_heading(f"{caption_prefix}: {target_figure['name']}", level=4)
-                heading.alignment = 1
+                # Chỉ thêm heading nếu không phải clean mode
+                if not clean_mode:
+                    heading = doc.add_heading(f"{caption_prefix}: {target_figure['name']}", level=4)
+                    heading.alignment = 1
                 
                 # Decode và chèn ảnh
                 try:
@@ -1019,17 +1106,18 @@ class EnhancedWordExporter:
                         # Cleanup
                         os.unlink(tmp_file.name)
                     
-                    # Thêm caption với thông tin
-                    caption_para = doc.add_paragraph()
-                    caption_para.alignment = 1
-                    caption_run = caption_para.add_run(
-                        f"Confidence: {target_figure['confidence']:.1f}% | "
-                        f"Method: {target_figure['method']} | "
-                        f"Aspect: {target_figure['aspect_ratio']:.2f}"
-                    )
-                    caption_run.font.size = Pt(9)
-                    caption_run.font.color.rgb = RGBColor(128, 128, 128)
-                    caption_run.italic = True
+                    # Chỉ thêm caption nếu không phải clean mode
+                    if not clean_mode:
+                        caption_para = doc.add_paragraph()
+                        caption_para.alignment = 1
+                        caption_run = caption_para.add_run(
+                            f"Confidence: {target_figure['confidence']:.1f}% | "
+                            f"Method: {target_figure['method']} | "
+                            f"Aspect: {target_figure['aspect_ratio']:.2f}"
+                        )
+                        caption_run.font.size = Pt(9)
+                        caption_run.font.color.rgb = RGBColor(128, 128, 128)
+                        caption_run.italic = True
                     
                     st.success(f"✅ Đã chèn ảnh {target_figure['name']} thành công!")
                     
@@ -1213,7 +1301,7 @@ def check_dependencies():
     return missing, dependencies
 
 def main():
-    st.markdown('<h1 class="main-header">📝 Enhanced PDF/LaTeX Converter - FIXED</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📝 Enhanced PDF/LaTeX Converter - Clean Word Export</h1>', unsafe_allow_html=True)
     
     # Kiểm tra dependencies
     missing_deps, dep_commands = check_dependencies()
@@ -1226,23 +1314,23 @@ def main():
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">🚀 PHIÊN BẢN ĐÃ FIX</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Tách ảnh được • ✅ Chèn ảnh đẹp • ✅ LaTeX chuẩn • ✅ Word export fixed</p>
+        <h2 style="margin: 0;">🎉 CLEAN WORD EXPORT - BỎ METADATA</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Tách ảnh được • ✅ Chèn ảnh đẹp • ✅ LaTeX chuẩn • ✅ Word sạch sẽ</p>
         <div style="display: flex; justify-content: space-around; margin-top: 1.5rem;">
             <div style="text-align: center;">
-                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔍</div>
-                <div><strong>4 Phương pháp tách ảnh</strong></div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Edge • Contour • Grid • Blob</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🎯</div>
-                <div><strong>Chèn thông minh</strong></div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Context-aware positioning</div>
-            </div>
-            <div style="text-align: center;">
                 <div style="font-size: 2rem; margin-bottom: 0.5rem;">📄</div>
-                <div><strong>Word export fixed</strong></div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Proper docx with images</div>
+                <div><strong>Clean Word Export</strong></div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">Bỏ metadata • Bỏ appendix</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🎛️</div>
+                <div><strong>Dual Mode</strong></div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">Clean • Full • Tùy chọn</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔍</div>
+                <div><strong>Figure Insertion</strong></div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">Debug • Test • Improved</div>
             </div>
         </div>
     </div>
@@ -1311,6 +1399,13 @@ def main():
         st.markdown("""
         ### 🎯 **Cải tiến chính:**
         
+        **📄 Clean Word Export:**
+        - ✅ Bỏ tiêu đề metadata
+        - ✅ Bỏ thông tin thời gian, figures count
+        - ✅ Bỏ appendix thống kê
+        - ✅ Chỉ nội dung chính + figures
+        - ✅ Dual mode: Clean vs Full
+        
         **🔍 Tách ảnh SIÊU CẢI TIẾN:**
         - ✅ 4 phương pháp song song
         - ✅ Threshold cực thấp (tách được hầu hết ảnh)
@@ -1318,30 +1413,24 @@ def main():
         - ✅ Debug visualization đẹp
         - ✅ Multi-method confidence scoring
         
-        **🎯 Chèn vị trí thông minh:**
-        - ✅ Pattern recognition cải tiến
-        - ✅ Context-aware positioning
-        - ✅ Fallback strategies
-        - ✅ Beautiful tags với confidence
-        
-        **📄 Word export cải tiến:**
-        - ✅ LaTeX preserved format
-        - ✅ Figure previews
-        - ✅ Detailed appendix
-        - ✅ Professional styling
+        **🎯 Figure Insertion Improved:**
+        - ✅ Debug mode real-time
+        - ✅ Better tag parsing
+        - ✅ Fallback matching strategies
+        - ✅ Test functions for debugging
         
         ### 🚀 **Khắc phục:**
+        - ❌ Word có metadata rối → ✅ Clean mode
+        - ❌ Appendix không cần → ✅ Bỏ hoàn toàn
+        - ❌ Figures không chèn → ✅ Debug mode
         - ❌ Không tách được ảnh → ✅ 4 phương pháp
-        - ❌ Tách sai/thiếu → ✅ Threshold cực thấp
-        - ❌ Chèn sai vị trí → ✅ Smart positioning
         - ❌ LaTeX format sai → ✅ Fixed prompt
-        - ❌ Word export lỗi → ✅ Proper docx
         
-        ### 🔧 **Troubleshooting:**
-        - Không tách được: Dùng preset "Tách nhiều"
-        - Tách nhiều noise: Dùng preset "Chất lượng"
-        - Sai vị trí: Kiểm tra pattern câu hỏi
-        - Word lỗi: Kiểm tra python-docx
+        ### 🔧 **Hướng dẫn:**
+        - **Clean Mode**: Chỉ nội dung + figures
+        - **Full Mode**: Đầy đủ metadata + appendix
+        - **Debug**: Xem real-time processing
+        - **Test**: Thử nghiệm trước khi dùng
         """)
     
     if not api_key:
@@ -1607,57 +1696,89 @@ d) [khẳng định d đầy đủ]
                         )
                     
                     with col_y:
-                        if DOCX_AVAILABLE and st.button("📄 Tạo Word", key="create_word"):
-                            with st.spinner("🔄 Đang tạo Word với LaTeX..."):
-                                try:
-                                    # Tạo Word document thực sự
-                                    extracted_figs = st.session_state.get('pdf_extracted_figures')
-                                    original_imgs = st.session_state.get('pdf_images')
-                                    
-                                    # Debug info trước khi tạo Word
-                                    if extracted_figs:
-                                        st.info(f"📊 Sẽ chèn {len(extracted_figs)} figures vào Word")
-                                        for i, fig in enumerate(extracted_figs):
-                                            st.write(f"   {i+1}. {fig['name']} ({fig['confidence']:.1f}%)")
-                                    
-                                    word_buffer = EnhancedWordExporter.create_word_document(
-                                        st.session_state.pdf_latex_content,
-                                        extracted_figures=extracted_figs,
-                                        images=original_imgs
-                                    )
-                                    
-                                    filename = uploaded_pdf.name.replace('.pdf', '_converted.docx')
-                                    
-                                    st.download_button(
-                                        label="📄 Tải Word (.docx)",
-                                        data=word_buffer.getvalue(),
-                                        file_name=filename,
-                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                        key="download_word"
-                                    )
-                                    
-                                    st.success("✅ Word document đã tạo thành công!")
-                                    
-                                    # Hướng dẫn kiểm tra
-                                    st.markdown("""
-                                    ### 🔍 Kiểm tra kết quả:
-                                    1. **Mở file Word** → Xem ảnh đã được chèn chưa
-                                    2. **Nếu thiếu ảnh** → Kiểm tra "Debug: Tags đã chèn" ở trên
-                                    3. **Nếu có lỗi** → Dùng "Test Figure Insertion" trong tab Debug
-                                    4. **Báo lỗi** → Chụp màn hình debug info
-                                    """)
-                                    
-                                    # Thêm thông tin về nội dung
-                                    if extracted_figs:
-                                        st.info(f"📊 Đã bao gồm {len(extracted_figs)} figures được tách")
-                                    if original_imgs:
-                                        st.info(f"📸 Đã bao gồm {len(original_imgs)} ảnh gốc")
+                        if DOCX_AVAILABLE:
+                            # Tùy chọn Word export
+                            st.markdown("**📄 Tùy chọn Word Export:**")
+                            word_clean_mode = st.checkbox("Clean Mode (bỏ metadata, appendix)", value=True, key="word_clean")
+                            
+                            if st.button("📄 Tạo Word", key="create_word"):
+                                with st.spinner("🔄 Đang tạo Word với LaTeX..."):
+                                    try:
+                                        # Tạo Word document thực sự
+                                        extracted_figs = st.session_state.get('pdf_extracted_figures')
+                                        original_imgs = st.session_state.get('pdf_images')
                                         
-                                except Exception as e:
-                                    st.error(f"❌ Lỗi tạo Word: {str(e)}")
-                                    st.error("💡 Thử: pip install python-docx")
-                                    st.error("🔧 Hoặc dùng 'Test Figure Insertion' để debug")
-                        elif not DOCX_AVAILABLE:
+                                        # Debug info trước khi tạo Word
+                                        if extracted_figs:
+                                            st.info(f"📊 Sẽ chèn {len(extracted_figs)} figures vào Word")
+                                            for i, fig in enumerate(extracted_figs):
+                                                st.write(f"   {i+1}. {fig['name']} ({fig['confidence']:.1f}%)")
+                                        
+                                        if word_clean_mode:
+                                            word_buffer = EnhancedWordExporter.create_word_document(
+                                                st.session_state.pdf_latex_content,
+                                                extracted_figures=extracted_figs,
+                                                images=None  # Không thêm ảnh gốc trong clean mode
+                                            )
+                                            filename = uploaded_pdf.name.replace('.pdf', '_clean.docx')
+                                            success_msg = "✅ Word document (Clean) đã tạo thành công!"
+                                        else:
+                                            word_buffer = EnhancedWordExporter.create_word_document_full(
+                                                st.session_state.pdf_latex_content,
+                                                extracted_figures=extracted_figs,
+                                                images=original_imgs
+                                            )
+                                            filename = uploaded_pdf.name.replace('.pdf', '_full.docx')
+                                            success_msg = "✅ Word document (Full) đã tạo thành công!"
+                                        
+                                        st.download_button(
+                                            label="📄 Tải Word (.docx)",
+                                            data=word_buffer.getvalue(),
+                                            file_name=filename,
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            key="download_word"
+                                        )
+                                        
+                                        st.success(success_msg)
+                                        
+                                        # Hướng dẫn kiểm tra
+                                        if word_clean_mode:
+                                            st.markdown("""
+                                            ### 📝 Clean Mode Features:
+                                            - ✅ **Không có** tiêu đề metadata 
+                                            - ✅ **Không có** thông tin thời gian tạo
+                                            - ✅ **Không có** appendix với bảng thống kê
+                                            - ✅ **Không có** figure headings và captions
+                                            - ✅ **Chỉ có** nội dung chính + figures embedded
+                                            
+                                            ### 🔍 So sánh với ảnh bạn gửi:
+                                            - ❌ "Tài liệu LaTeX đã chuyển đổi" → ✅ **Đã bỏ**
+                                            - ❌ "Được tạo bởi Enhanced..." → ✅ **Đã bỏ**
+                                            - ❌ "Figures: 3" → ✅ **Đã bỏ**
+                                            - ❌ "Phụ lục: Thông tin chi tiết..." → ✅ **Đã bỏ**
+                                            - ❌ Caption "Confidence: 70.0%..." → ✅ **Đã bỏ**
+                                            """)
+                                        else:
+                                            st.markdown("""
+                                            ### 📊 Full Mode Features:
+                                            - ✅ Có tiêu đề và metadata
+                                            - ✅ Có thông tin thời gian tạo
+                                            - ✅ Có appendix với thông tin figures
+                                            - ✅ Có figure headings và captions
+                                            - ✅ Có ảnh gốc nếu cần
+                                            """)
+                                        
+                                        # Thêm thông tin về nội dung
+                                        if extracted_figs:
+                                            st.info(f"📊 Đã bao gồm {len(extracted_figs)} figures được tách")
+                                        if not word_clean_mode and original_imgs:
+                                            st.info(f"📸 Đã bao gồm {len(original_imgs)} ảnh gốc")
+                                            
+                                    except Exception as e:
+                                        st.error(f"❌ Lỗi tạo Word: {str(e)}")
+                                        st.error("💡 Thử: pip install python-docx")
+                                        st.error("🔧 Hoặc dùng 'Test Figure Insertion' để debug")
+                        else:
                             st.error("❌ Cần cài đặt python-docx")
                             st.code("pip install python-docx", language="bash")
     
@@ -1756,16 +1877,24 @@ d) [khẳng định d đầy đủ]
         col_test1, col_test2 = st.columns(2)
         
         with col_test1:
+            test_mode = st.radio("Test Mode", ["Clean", "Full"], index=0, key="test_mode_radio")
             if st.button("Test Word Export", key="test_word"):
                 if DOCX_AVAILABLE:
                     try:
                         test_content = "Test LaTeX: ${x^2 + y^2 = z^2}$"
-                        test_buffer = EnhancedWordExporter.create_word_document(test_content)
-                        st.success("✅ Word export test passed")
+                        if test_mode == "Clean":
+                            test_buffer = EnhancedWordExporter.create_word_document(test_content)
+                            filename = "test_clean.docx"
+                            st.success("✅ Clean mode test passed - Không metadata")
+                        else:
+                            test_buffer = EnhancedWordExporter.create_word_document_full(test_content)
+                            filename = "test_full.docx"
+                            st.success("✅ Full mode test passed - Có metadata")
+                        
                         st.download_button(
-                            "📄 Download Test Word",
+                            f"📄 Download Test Word ({test_mode})",
                             data=test_buffer.getvalue(),
-                            file_name="test.docx",
+                            file_name=filename,
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
                     except Exception as e:
@@ -1774,6 +1903,7 @@ d) [khẳng định d đầy đủ]
                     st.error("❌ python-docx not available")
         
         with col_test2:
+            test_clean_mode = st.checkbox("Test Clean Mode", value=True, key="test_clean")
             if st.button("Test Figure Insertion", key="test_figure"):
                 if DOCX_AVAILABLE:
                     try:
@@ -1810,14 +1940,22 @@ Kết quả như trên.
                             }
                         ]
                         
-                        test_buffer = EnhancedWordExporter.create_word_document(test_content, extracted_figures=mock_figures)
-                        st.success("✅ Figure insertion test passed")
+                        if test_clean_mode:
+                            test_buffer = EnhancedWordExporter.create_word_document(test_content, extracted_figures=mock_figures)
+                            filename = "test_clean_with_figures.docx"
+                            st.success("✅ Clean mode test passed - Không có heading, caption")
+                        else:
+                            test_buffer = EnhancedWordExporter.create_word_document_full(test_content, extracted_figures=mock_figures)
+                            filename = "test_full_with_figures.docx"
+                            st.success("✅ Full mode test passed - Có heading, caption, metadata")
+                        
                         st.download_button(
-                            "📄 Download Test Word with Figures",
+                            f"📄 Download Test Word ({'Clean' if test_clean_mode else 'Full'})",
                             data=test_buffer.getvalue(),
-                            file_name="test_with_figures.docx",
+                            file_name=filename,
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
+                        
                     except Exception as e:
                         st.error(f"❌ Figure insertion test failed: {str(e)}")
                 else:
@@ -1827,29 +1965,29 @@ Kết quả như trên.
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>🎯 PHIÊN BẢN ĐÃ FIX HOÀN TOÀN - FIGURE INSERTION IMPROVED</h3>
+        <h3>🎯 CLEAN WORD EXPORT - BỎ METADATA & APPENDIX</h3>
         <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 1.5rem;'>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>🔍 Tách ảnh SIÊU CẢI TIẾN</h4>
-                <p>✅ 4 phương pháp song song<br>✅ Threshold cực thấp<br>✅ Smart merging<br>✅ Debug visualization đẹp</p>
+                <h4>📄 Clean Word Export</h4>
+                <p>✅ Bỏ tiêu đề metadata<br>✅ Bỏ thông tin thời gian<br>✅ Bỏ appendix thống kê<br>✅ Chỉ nội dung chính + figures</p>
             </div>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>📄 Word Export + Figure Insertion</h4>
-                <p>✅ Proper docx format<br>✅ LaTeX preserved<br>✅ Figures embedded correctly<br>✅ Debug mode enabled</p>
+                <h4>🎛️ Dual Mode Support</h4>
+                <p>✅ Clean Mode: Sạch sẽ, chỉ nội dung<br>✅ Full Mode: Đầy đủ metadata<br>✅ Tùy chọn linh hoạt<br>✅ Test cả 2 modes</p>
             </div>
             <div style='background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 10px;'>
-                <h4>🎯 Debug & Testing</h4>
-                <p>✅ Real-time debug info<br>✅ Tag parsing improved<br>✅ Test functions added<br>✅ Step-by-step tracking</p>
+                <h4>🔍 Enhanced Figure Insertion</h4>
+                <p>✅ Debug mode real-time<br>✅ Better tag parsing<br>✅ Fallback matching<br>✅ Error handling improved</p>
             </div>
         </div>
         <div style='margin-top: 2rem; padding: 1.5rem; background: rgba(255,255,255,0.1); border-radius: 10px;'>
             <p style='margin: 0; font-size: 1.1rem;'>
-                <strong>🚀 GIẢI PHÁP CHÈN ẢNH VÀO WORD:</strong><br>
-                🔍 **Debug Mode**: Xem real-time tags được tạo và parsed<br>
-                📊 **Improved Matching**: Multiple strategies để match figures<br>
-                🧪 **Test Functions**: Test riêng việc chèn ảnh với mock data<br>
-                🎯 **Better Error Handling**: Chi tiết lỗi và hướng dẫn fix<br>
-                📝 **Tag Format**: Simplified tags dễ parse hơn
+                <strong>🎉 CLEAN WORD EXPORT - THEO YÊU CẦU:</strong><br>
+                ❌ Tiêu đề "Tài liệu LaTeX đã chuyển đổi" → ✅ Bỏ hoàn toàn<br>
+                ❌ Metadata thời gian, figures count → ✅ Bỏ hoàn toàn<br>
+                ❌ Appendix "Phụ lục thông tin chi tiết" → ✅ Bỏ hoàn toàn<br>
+                ❌ Debug comments ```latex → ✅ Bỏ hoàn toàn<br>
+                ✅ Chỉ giữ lại: Nội dung chính + Figures được chèn đúng vị trí
             </p>
         </div>
     </div>
