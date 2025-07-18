@@ -1081,8 +1081,6 @@ class SuperEnhancedImageExtractor:
         
         return img_pil
 
-# Các class khác giữ nguyên như GeminiAPI, PDFProcessor, EnhancedWordExporter...
-
 class GeminiAPI:
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -1171,7 +1169,7 @@ class PDFProcessor:
 
 class EnhancedWordExporter:
     """
-    Xuất Word document sạch sẽ
+    Xuất Word document sạch sẽ với xử lý LaTeX math chính xác
     """
     
     @staticmethod
@@ -1202,11 +1200,13 @@ class EnhancedWordExporter:
                         EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures)
                         continue
                 
-                # Xử lý câu hỏi
+                # Xử lý câu hỏi - đặt màu đen và in đậm
                 if re.match(r'^(câu|bài)\s+\d+', line.lower()):
                     heading = doc.add_heading(line, level=3)
-                    # Đặt màu đen cho câu hỏi
-                    heading.runs[0].font.color.rgb = RGBColor(0, 0, 0)
+                    # Đặt màu đen cho câu hỏi và in đậm
+                    for run in heading.runs:
+                        run.font.color.rgb = RGBColor(0, 0, 0)  # Màu đen
+                        run.font.bold = True
                     continue
                 
                 # Xử lý paragraph thường
@@ -1228,12 +1228,100 @@ class EnhancedWordExporter:
     @staticmethod
     def _process_latex_content(para, content):
         """
-        Xử lý nội dung LaTeX
+        Xử lý nội dung LaTeX - chuyển ${...}$ thành dạng Word hiệu quả
         """
+        # Tách content thành các phần: text thường và công thức ${...}$
         parts = re.split(r'(\$\{[^}]+\}\$)', content)
         
         for part in parts:
-            if part.startswith('${') and part.endswith('}$')
+            if part.startswith('${') and part.endswith('}$'):
+                # Đây là công thức LaTeX
+                # Loại bỏ ${ và }$ để lấy nội dung bên trong
+                formula_content = part[2:-2]
+                
+                # Chuyển đổi một số ký hiệu LaTeX cơ bản thành Unicode
+                formula_content = EnhancedWordExporter._convert_latex_to_unicode(formula_content)
+                
+                # Thêm công thức vào paragraph với font khác biệt
+                run = para.add_run(formula_content)
+                run.font.name = 'Cambria Math'  # Font phù hợp cho toán học
+                run.font.italic = True  # In nghiêng cho công thức
+                
+            elif part.strip():
+                # Đây là text thường
+                run = para.add_run(part)
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(12)
+    
+    @staticmethod
+    def _convert_latex_to_unicode(latex_content):
+        """
+        Chuyển đổi một số ký hiệu LaTeX sang Unicode
+        """
+        # Dictionary chuyển đổi LaTeX sang Unicode
+        latex_to_unicode = {
+            # Chữ Hy Lạp
+            '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
+            '\\epsilon': 'ε', '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ',
+            '\\pi': 'π', '\\sigma': 'σ', '\\phi': 'φ', '\\omega': 'ω',
+            '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ', '\\Pi': 'Π',
+            '\\Sigma': 'Σ', '\\Phi': 'Φ', '\\Omega': 'Ω',
+            
+            # Ký hiệu toán học
+            '\\infty': '∞', '\\pm': '±', '\\mp': '∓',
+            '\\times': '×', '\\div': '÷', '\\cdot': '·',
+            '\\leq': '≤', '\\geq': '≥', '\\neq': '≠',
+            '\\approx': '≈', '\\equiv': '≡', '\\sim': '∼',
+            '\\subset': '⊂', '\\supset': '⊃', '\\in': '∈',
+            '\\notin': '∉', '\\cup': '∪', '\\cap': '∩',
+            '\\sum': '∑', '\\prod': '∏', '\\int': '∫',
+            '\\partial': '∂', '\\nabla': '∇',
+            
+            # Mũi tên
+            '\\rightarrow': '→', '\\leftarrow': '←',
+            '\\leftrightarrow': '↔', '\\Rightarrow': '⇒',
+            '\\Leftarrow': '⇐', '\\Leftrightarrow': '⇔',
+            
+            # Xử lý phân số đơn giản
+            '\\frac{1}{2}': '½', '\\frac{1}{3}': '⅓', '\\frac{2}{3}': '⅔',
+            '\\frac{1}{4}': '¼', '\\frac{3}{4}': '¾', '\\frac{1}{8}': '⅛',
+            
+            # Lũy thừa đơn giản (sử dụng superscript Unicode)
+            '^2': '²', '^3': '³', '^1': '¹',
+            '^0': '⁰', '^4': '⁴', '^5': '⁵',
+            '^6': '⁶', '^7': '⁷', '^8': '⁸', '^9': '⁹',
+            
+            # Chỉ số dưới đơn giản (sử dụng subscript Unicode)
+            '_0': '₀', '_1': '₁', '_2': '₂', '_3': '₃',
+            '_4': '₄', '_5': '₅', '_6': '₆', '_7': '₇',
+            '_8': '₈', '_9': '₉',
+        }
+        
+        # Thực hiện chuyển đổi
+        result = latex_content
+        for latex_symbol, unicode_symbol in latex_to_unicode.items():
+            result = result.replace(latex_symbol, unicode_symbol)
+        
+        # Xử lý phân số phức tạp \\frac{a}{b} -> a/b
+        frac_pattern = r'\\frac\{([^}]+)\}\{([^}]+)\}'
+        result = re.sub(frac_pattern, r'(\1)/(\2)', result)
+        
+        # Xử lý căn bậc hai \\sqrt{x} -> √x
+        sqrt_pattern = r'\\sqrt\{([^}]+)\}'
+        result = re.sub(sqrt_pattern, r'√(\1)', result)
+        
+        # Xử lý lũy thừa phức tạp {x}^{y} -> x^y
+        pow_pattern = r'\{([^}]+)\}\^\{([^}]+)\}'
+        result = re.sub(pow_pattern, r'\1^(\2)', result)
+        
+        # Xử lý chỉ số dưới phức tạp {x}_{y} -> x_y
+        sub_pattern = r'\{([^}]+)\}_\{([^}]+)\}'
+        result = re.sub(sub_pattern, r'\1_(\2)', result)
+        
+        # Loại bỏ các dấu ngoặc nhọn còn lại
+        result = result.replace('{', '').replace('}', '')
+        
+        return result
     
     @staticmethod
     def _insert_figure_to_word(doc, tag_line, extracted_figures):
@@ -1499,8 +1587,8 @@ def main():
         st.error(f"❌ Lỗi khởi tạo: {str(e)}")
         return
     
-    # Main content với tabs
-    tab1, tab2 = st.tabs(["📄 PDF sang LaTeX", "🖼️ Ảnh sang LaTeX"])
+    # Main content với tabs - thêm tab mới
+    tab1, tab2, tab3 = st.tabs(["📄 PDF sang LaTeX", "🖼️ Ảnh sang LaTeX", "📷 Ảnh chuyển & chèn"])
     
     with tab1:
         st.header("📄 Chuyển đổi PDF sang LaTeX")
@@ -1858,6 +1946,195 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                         else:
                             st.error("❌ Cần cài đặt python-docx")
     
+    # Tab mới: Ảnh chuyển & chèn
+    with tab3:
+        st.header("📷 Ảnh chuyển đổi & chèn figures")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+            <h4>🎯 Tính năng đặc biệt:</h4>
+            <p>• 📄 Chuyển đổi văn bản thành LaTeX</p>
+            <p>• 🖼️ Tách và chèn figures tự động</p>
+            <p>• ⚖️ Sử dụng Balanced Text Filter</p>
+            <p>• 📝 Xuất Word với figures</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        uploaded_convert_image = st.file_uploader("Chọn ảnh để chuyển đổi & chèn", type=['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'], key="convert_insert")
+        
+        if uploaded_convert_image:
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.subheader("📷 Ảnh gốc")
+                
+                # Hiển thị ảnh
+                convert_image_pil = Image.open(uploaded_convert_image)
+                st.image(convert_image_pil, caption=f"Ảnh: {uploaded_convert_image.name}", use_column_width=True)
+                
+                # Cài đặt
+                st.markdown("### ⚙️ Cài đặt chuyển đổi")
+                
+                extract_and_insert = st.checkbox("🎯 Tách & chèn figures tự động", value=True, key="extract_insert")
+                
+                if extract_and_insert and enable_extraction:
+                    st.success("✅ Balanced Text Filter đã bật")
+                elif not enable_extraction:
+                    st.warning("⚠️ Cần bật Balanced Text Filter trong sidebar")
+                
+                # Cài đặt prompt
+                with st.expander("📝 Cài đặt prompt"):
+                    custom_prompt = st.text_area("Custom prompt (tùy chọn):", 
+                        placeholder="Để trống để sử dụng prompt mặc định...")
+            
+            with col2:
+                st.subheader("⚡ Xử lý & Kết quả")
+                
+                if st.button("🚀 Chuyển đổi & chèn figures", type="primary", key="convert_insert_btn"):
+                    convert_img_bytes = uploaded_convert_image.getvalue()
+                    
+                    # Bước 1: Tách figures
+                    extracted_convert_figures = []
+                    convert_debug_img = None
+                    convert_h, convert_w = 0, 0
+                    
+                    if extract_and_insert and enable_extraction and CV2_AVAILABLE and image_extractor:
+                        st.info("🔍 Bước 1: Tách figures...")
+                        try:
+                            convert_figures, convert_h, convert_w = image_extractor.extract_figures_and_tables(convert_img_bytes)
+                            extracted_convert_figures = convert_figures
+                            
+                            if convert_figures:
+                                convert_debug_img = image_extractor.create_beautiful_debug_visualization(convert_img_bytes, convert_figures)
+                                st.success(f"✅ Đã tách được {len(convert_figures)} figures!")
+                                
+                                # Hiển thị figures tách được
+                                with st.expander("🔍 Xem figures đã tách"):
+                                    display_beautiful_figures(convert_figures, convert_debug_img)
+                            else:
+                                st.info("ℹ️ Không tìm thấy figures nào")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Lỗi tách figures: {str(e)}")
+                    
+                    # Bước 2: Chuyển đổi văn bản
+                    st.info("📝 Bước 2: Chuyển đổi văn bản...")
+                    
+                    # Sử dụng custom prompt hoặc default
+                    if custom_prompt.strip():
+                        final_prompt = custom_prompt.strip()
+                    else:
+                        final_prompt = """
+Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
+
+🎯 YÊU CẦU ĐỊNH DẠNG:
+
+1. **Câu hỏi trắc nghiệm:**
+```
+Câu X: [nội dung câu hỏi đầy đủ]
+A) [đáp án A hoàn chỉnh]
+B) [đáp án B hoàn chỉnh]
+C) [đáp án C hoàn chỉnh]  
+D) [đáp án D hoàn chỉnh]
+```
+
+2. **Công thức toán học - LUÔN dùng ${...}$:**
+- ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
+- ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
+- Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
+
+⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
+Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\frac{a}{b}}$
+
+🔹 CHÚ Ý: Chỉ dùng ký tự $ khi có cặp ${...}$, không dùng $ đơn lẻ!
+"""
+                    
+                    # Gọi API
+                    try:
+                        convert_latex_result = gemini_api.convert_to_latex(convert_img_bytes, "image/png", final_prompt)
+                        
+                        if convert_latex_result:
+                            st.success("✅ Chuyển đổi văn bản thành công!")
+                            
+                            # Bước 3: Chèn figures
+                            if extract_and_insert and extracted_convert_figures and CV2_AVAILABLE and image_extractor:
+                                st.info("🖼️ Bước 3: Chèn figures...")
+                                convert_latex_result = image_extractor.insert_figures_into_text_precisely(
+                                    convert_latex_result, extracted_convert_figures, convert_h, convert_w
+                                )
+                                st.success("✅ Đã chèn figures vào văn bản!")
+                            
+                            # Hiển thị kết quả
+                            st.markdown("### 📝 Kết quả cuối cùng")
+                            st.markdown('<div class="latex-output">', unsafe_allow_html=True)
+                            st.code(convert_latex_result, language="latex")
+                            st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            # Thống kê
+                            if extracted_convert_figures:
+                                st.markdown("### 📊 Thống kê")
+                                col_1, col_2, col_3 = st.columns(3)
+                                with col_1:
+                                    st.metric("🖼️ Figures", len(extracted_convert_figures))
+                                with col_2:
+                                    tables = sum(1 for f in extracted_convert_figures if f['is_table'])
+                                    st.metric("📊 Bảng", tables)
+                                with col_3:
+                                    figures_count = len(extracted_convert_figures) - tables
+                                    st.metric("🖼️ Hình", figures_count)
+                            
+                            # Lưu vào session
+                            st.session_state.convert_latex_content = convert_latex_result
+                            st.session_state.convert_extracted_figures = extracted_convert_figures if extract_and_insert else None
+                            
+                        else:
+                            st.error("❌ API không trả về kết quả")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Lỗi chuyển đổi: {str(e)}")
+                
+                # Download buttons cho convert & insert
+                if 'convert_latex_content' in st.session_state:
+                    st.markdown("---")
+                    st.markdown("### 📥 Tải xuống")
+                    
+                    col_x, col_y = st.columns(2)
+                    with col_x:
+                        st.download_button(
+                            label="📝 Tải LaTeX (.tex)",
+                            data=st.session_state.convert_latex_content,
+                            file_name=uploaded_convert_image.name.replace(uploaded_convert_image.name.split('.')[-1], 'tex'),
+                            mime="text/plain",
+                            type="primary",
+                            key="download_convert_latex"
+                        )
+                    
+                    with col_y:
+                        if DOCX_AVAILABLE:
+                            if st.button("📄 Tạo Word với figures", key="create_convert_word"):
+                                with st.spinner("🔄 Đang tạo Word với figures..."):
+                                    try:
+                                        extracted_figs = st.session_state.get('convert_extracted_figures')
+                                        
+                                        word_buffer = EnhancedWordExporter.create_word_document(
+                                            st.session_state.convert_latex_content,
+                                            extracted_figures=extracted_figs
+                                        )
+                                        
+                                        st.download_button(
+                                            label="📄 Tải Word (.docx)",
+                                            data=word_buffer.getvalue(),
+                                            file_name=uploaded_convert_image.name.replace(uploaded_convert_image.name.split('.')[-1], 'docx'),
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            key="download_convert_word"
+                                        )
+                                        
+                                        st.success("✅ Word document với figures đã tạo thành công!")
+                                        
+                                    except Exception as e:
+                                        st.error(f"❌ Lỗi tạo Word: {str(e)}")
+                        else:
+                            st.error("❌ Cần cài đặt python-docx")
+    
     # Footer
     st.markdown("---")
     st.markdown("""
@@ -1867,9 +2144,9 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
         <p><strong>⚖️ Lọc text mà vẫn giữ figures</strong></p>
         <p><strong>🧠 Override logic thông minh</strong></p>
         <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
-        <p><strong>📄 Hỗ trợ PDF + 🖼️ Hỗ trợ ảnh đơn lẻ</strong></p>
+        <p><strong>📄 Hỗ trợ PDF + 🖼️ Hỗ trợ ảnh đơn lẻ + 📷 Hỗ trợ ảnh chuyển & chèn</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    main()):
+    main()
