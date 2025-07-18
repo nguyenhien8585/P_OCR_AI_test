@@ -32,7 +32,7 @@ except ImportError:
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/LaTeX Converter - Ultra Text Filter",
+    page_title="PDF/LaTeX Converter - Balanced Text Filter",
     page_icon="📝",
     layout="wide"
 )
@@ -136,43 +136,43 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-class UltraTextFilter:
+class BalancedTextFilter:
     """
-    Bộ lọc text SIÊU MẠNH - Loại bỏ 100% ảnh dính chữ
+    Bộ lọc text CÂN BẰNG - Lọc text nhưng vẫn giữ được figures
     """
     
     def __init__(self):
-        # Ngưỡng cực kỳ nghiêm ngặt để loại bỏ text
-        self.text_density_threshold = 0.4      # Giảm từ 0.6 xuống 0.4
-        self.min_visual_complexity = 0.5       # Tăng từ 0.2 lên 0.5
-        self.min_diagram_score = 0.3           # Tăng từ 0.2 lên 0.3
-        self.min_figure_quality = 0.3          # Tăng từ 0.1 lên 0.3
+        # Ngưỡng cân bằng - không quá nghiêm ngặt
+        self.text_density_threshold = 0.7      # Tăng từ 0.4 lên 0.7 (dễ dàng hơn)
+        self.min_visual_complexity = 0.2       # Giảm từ 0.5 xuống 0.2 (dễ dàng hơn)  
+        self.min_diagram_score = 0.1           # Giảm từ 0.3 xuống 0.1 (dễ dàng hơn)
+        self.min_figure_quality = 0.15         # Giảm từ 0.3 xuống 0.15 (dễ dàng hơn)
         
-        # Thông số phân tích text nâng cao
-        self.line_density_threshold = 0.15     # Mật độ line cao = text
-        self.char_pattern_threshold = 0.6      # Mật độ ký tự
-        self.horizontal_structure_threshold = 0.7  # Cấu trúc ngang như text
-        self.whitespace_ratio_threshold = 0.3   # Tỷ lệ khoảng trắng
+        # Thông số phân tích text nâng cao - không quá khó
+        self.line_density_threshold = 0.25     # Tăng từ 0.15 lên 0.25 (ít loại bỏ hơn)
+        self.char_pattern_threshold = 0.8      # Tăng từ 0.6 lên 0.8 (ít loại bỏ hơn)
+        self.horizontal_structure_threshold = 0.8  # Tăng từ 0.7 lên 0.8
+        self.whitespace_ratio_threshold = 0.45  # Tăng từ 0.3 lên 0.45
         
-        # Aspect ratio filtering
-        self.text_aspect_ratio_min = 0.2       # Text thường có aspect ratio thấp
-        self.text_aspect_ratio_max = 8.0       # hoặc rất cao (1 dòng)
+        # Aspect ratio filtering - rộng hơn
+        self.text_aspect_ratio_min = 0.1       # Giảm từ 0.2 xuống 0.1
+        self.text_aspect_ratio_max = 12.0      # Tăng từ 8.0 lên 12.0
         
-        # Size filtering
-        self.min_meaningful_size = 2000        # Tối thiểu 2000 pixels
-        self.max_text_block_size = 0.6         # Tối đa 60% ảnh
+        # Size filtering - giảm yêu cầu
+        self.min_meaningful_size = 1000        # Giảm từ 2000 xuống 1000
+        self.max_text_block_size = 0.75        # Tăng từ 0.6 lên 0.75
         
         # Advanced pattern detection
-        self.enable_ocr_simulation = True      # Mô phỏng OCR
-        self.enable_histogram_analysis = True  # Phân tích histogram
-        self.enable_structure_analysis = True  # Phân tích cấu trúc
+        self.enable_ocr_simulation = True      
+        self.enable_histogram_analysis = True  
+        self.enable_structure_analysis = True  
         
         # Debug mode
         self.debug_mode = False
         
-    def analyze_and_filter_ultra(self, image_bytes, candidates):
+    def analyze_and_filter_balanced(self, image_bytes, candidates):
         """
-        Phân tích và lọc với độ chính xác 100%
+        Phân tích và lọc với độ cân bằng tốt hơn
         """
         if not CV2_AVAILABLE:
             return candidates
@@ -184,40 +184,40 @@ class UltraTextFilter:
             h, w = img.shape[:2]
             
             if self.debug_mode:
-                st.write(f"🔍 Ultra Text Filter analyzing {len(candidates)} candidates")
+                st.write(f"🔍 Balanced Text Filter analyzing {len(candidates)} candidates")
             
             # Phân tích từng candidate với 5 phương pháp
             analyzed_candidates = []
             for i, candidate in enumerate(candidates):
-                analysis = self._ultra_analyze_candidate(img, candidate)
+                analysis = self._balanced_analyze_candidate(img, candidate)
                 candidate.update(analysis)
                 analyzed_candidates.append(candidate)
                 
                 if self.debug_mode:
-                    st.write(f"   {i+1}. {candidate.get('bbox', 'N/A')}: text_score={analysis.get('text_score', 0):.2f}")
+                    st.write(f"   {i+1}. {candidate.get('bbox', 'N/A')}: text_score={analysis.get('text_score', 0):.2f}, is_text={analysis.get('is_text', False)}")
             
-            # Lọc nghiêm ngặt
-            filtered_candidates = self._ultra_strict_filter(analyzed_candidates)
+            # Lọc cân bằng
+            filtered_candidates = self._balanced_filter(analyzed_candidates)
             
             if self.debug_mode:
-                st.write(f"📊 Ultra filter result: {len(filtered_candidates)}/{len(candidates)}")
+                st.write(f"📊 Balanced filter result: {len(filtered_candidates)}/{len(candidates)}")
             
             return filtered_candidates
             
         except Exception as e:
             if self.debug_mode:
-                st.error(f"❌ Ultra filter error: {str(e)}")
+                st.error(f"❌ Balanced filter error: {str(e)}")
             return candidates  # Fallback
     
-    def _ultra_analyze_candidate(self, img, candidate):
+    def _balanced_analyze_candidate(self, img, candidate):
         """
-        Phân tích siêu chi tiết từng candidate
+        Phân tích cân bằng từng candidate
         """
         x, y, w, h = candidate['bbox']
         roi = img[y:y+h, x:x+w]
         
         if roi.size == 0:
-            return {'is_text': True, 'text_score': 1.0}
+            return {'is_text': False, 'text_score': 0.0}
         
         # Phương pháp 1: Advanced Text Density
         text_density = self._calculate_advanced_text_density(roi)
@@ -258,13 +258,25 @@ class UltraTextFilter:
         area = w * h
         is_text_size = area < self.min_meaningful_size
         
-        # Final decision
-        is_text = (
-            text_score > self.text_density_threshold or
-            geometric_score < self.min_diagram_score or
-            is_text_size or
-            (is_text_aspect and text_score > 0.3)
-        )
+        # Final decision - CÂN BẰNG HỢP LÝ
+        # Chỉ coi là text khi:
+        # 1. Text score RẤT CAO (> 0.8) VÀ là text aspect ratio
+        # 2. HOẶC có nhiều indicators text cùng lúc
+        
+        strong_text_indicators = 0
+        if text_score > 0.75:
+            strong_text_indicators += 1
+        if line_density > 0.3:
+            strong_text_indicators += 1
+        if char_pattern > 0.85:
+            strong_text_indicators += 1
+        if whitespace_ratio > 0.5:
+            strong_text_indicators += 1
+        if is_text_aspect and text_score > 0.6:
+            strong_text_indicators += 1
+        
+        # Chỉ coi là text khi có ÍT NHẤT 3 indicators mạnh
+        is_text = strong_text_indicators >= 3
         
         return {
             'text_density': text_density,
@@ -277,7 +289,8 @@ class UltraTextFilter:
             'text_score': text_score,
             'aspect_ratio': aspect_ratio,
             'is_text': is_text,
-            'area': area
+            'area': area,
+            'strong_text_indicators': strong_text_indicators
         }
     
     def _calculate_advanced_text_density(self, roi):
@@ -492,67 +505,71 @@ class UltraTextFilter:
         else:
             return 0.3
     
-    def _ultra_strict_filter(self, candidates):
+    def _balanced_filter(self, candidates):
         """
-        Lọc cực kỳ nghiêm ngặt
+        Lọc cân bằng - ưu tiên giữ lại figures
         """
         filtered = []
         
         for candidate in candidates:
-            # Loại bỏ text ngay lập tức
+            # Chỉ loại bỏ khi RẤT CHẮC CHẮN là text
             if candidate.get('is_text', False):
+                # Cho phép giữ lại nếu có geometric complexity cao
+                geometric_score = candidate.get('geometric_score', 0)
+                if geometric_score >= 0.3:  # Có elements phức tạp
+                    candidate['override_reason'] = 'complex_geometry'
+                    filtered.append(candidate)
+                    continue
+                
+                # Cho phép giữ lại nếu kích thước lớn và có structure
+                area = candidate.get('area', 0)
+                if area > 5000 and geometric_score > 0.1:
+                    candidate['override_reason'] = 'large_with_structure'
+                    filtered.append(candidate)
+                    continue
+                
+                # Loại bỏ text chắc chắn
                 continue
             
-            # Kiểm tra text score
-            text_score = candidate.get('text_score', 1.0)
+            # Kiểm tra các điều kiện khác - dễ dàng hơn
+            text_score = candidate.get('text_score', 0)
             if text_score > self.text_density_threshold:
+                # Vẫn cho phép giữ nếu có diagram elements
+                geometric_score = candidate.get('geometric_score', 0)
+                if geometric_score >= self.min_diagram_score:
+                    candidate['override_reason'] = 'has_diagram_elements'
+                    filtered.append(candidate)
                 continue
             
-            # Kiểm tra geometric score
-            geometric_score = candidate.get('geometric_score', 0)
-            if geometric_score < self.min_diagram_score:
-                continue
-            
-            # Kiểm tra size
+            # Kiểm tra size - giảm requirement
             area = candidate.get('area', 0)
             if area < self.min_meaningful_size:
+                # Cho phép figures nhỏ nếu có complexity cao
+                geometric_score = candidate.get('geometric_score', 0)
+                if geometric_score >= 0.4:
+                    candidate['override_reason'] = 'small_but_complex'
+                    filtered.append(candidate)
                 continue
             
-            # Kiểm tra aspect ratio
-            aspect_ratio = candidate.get('aspect_ratio', 1.0)
-            if (self.text_aspect_ratio_min <= aspect_ratio <= self.text_aspect_ratio_max and 
-                text_score > 0.3):
-                continue
-            
-            # Kiểm tra line density
-            line_density = candidate.get('line_density', 0)
-            if line_density > self.line_density_threshold:
-                continue
-            
-            # Kiểm tra char pattern
-            char_pattern = candidate.get('char_pattern', 0)
-            if char_pattern > self.char_pattern_threshold:
-                continue
-            
-            # Nếu pass tất cả tests
+            # Nếu pass hầu hết tests thì giữ lại
             filtered.append(candidate)
         
         return filtered
 
 class ContentBasedFigureFilter:
     """
-    Bộ lọc thông minh với Ultra Text Filter
+    Bộ lọc thông minh với Balanced Text Filter
     """
     
     def __init__(self):
-        self.text_filter = UltraTextFilter()
-        self.enable_ultra_filter = True
+        self.text_filter = BalancedTextFilter()
+        self.enable_balanced_filter = True
         self.min_estimated_count = 1
-        self.max_estimated_count = 8  # Giới hạn tối đa
+        self.max_estimated_count = 12  # Tăng từ 8 lên 12
         
     def analyze_content_and_filter(self, image_bytes, candidates):
         """
-        Phân tích với Ultra Text Filter
+        Phân tích với Balanced Text Filter
         """
         if not CV2_AVAILABLE:
             return candidates
@@ -565,18 +582,19 @@ class ContentBasedFigureFilter:
             
             estimated_count = self._estimate_figure_count_conservative(img)
             
-            # Ultra Text Filter
-            if self.enable_ultra_filter:
-                filtered_candidates = self.text_filter.analyze_and_filter_ultra(image_bytes, candidates)
-                st.success(f"🧠 Ultra Text Filter: {len(filtered_candidates)}/{len(candidates)} figures (estimated: {estimated_count})")
+            # Balanced Text Filter
+            if self.enable_balanced_filter:
+                filtered_candidates = self.text_filter.analyze_and_filter_balanced(image_bytes, candidates)
+                st.success(f"🧠 Balanced Text Filter: {len(filtered_candidates)}/{len(candidates)} figures (estimated: {estimated_count})")
             else:
                 filtered_candidates = candidates
             
-            # Giới hạn theo estimated count
-            if len(filtered_candidates) > estimated_count:
+            # Giới hạn theo estimated count - nhưng cho phép nhiều hơn
+            target_count = min(estimated_count + 2, self.max_estimated_count)  # +2 để đảm bảo
+            if len(filtered_candidates) > target_count:
                 # Sắp xếp theo confidence
                 sorted_candidates = sorted(filtered_candidates, key=lambda x: x.get('final_confidence', 0), reverse=True)
-                filtered_candidates = sorted_candidates[:estimated_count]
+                filtered_candidates = sorted_candidates[:target_count]
             
             return filtered_candidates
             
@@ -599,34 +617,34 @@ class ContentBasedFigureFilter:
             h_separators = len(cv2.findContours(h_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0])
             
             # Estimate based on separators
-            estimated = min(max(h_separators, self.min_estimated_count), self.max_estimated_count)
+            estimated = min(max(h_separators + 1, self.min_estimated_count), self.max_estimated_count)
             
             return estimated
             
         except Exception:
-            return 3  # Default fallback
+            return 4  # Default fallback
 
 class SuperEnhancedImageExtractor:
     """
-    Tách ảnh với Ultra Text Filter
+    Tách ảnh với Balanced Text Filter
     """
     
     def __init__(self):
-        # Tham số cơ bản
-        self.min_area_ratio = 0.001       # Tăng từ 0.0008
-        self.min_area_abs = 600           # Tăng từ 400
-        self.min_width = 30               # Tăng từ 25
-        self.min_height = 30              # Tăng từ 25
-        self.max_figures = 20             # Giảm từ 30
-        self.max_area_ratio = 0.70        # Giảm từ 0.80
+        # Tham số cơ bản - giảm requirements
+        self.min_area_ratio = 0.0005       # Giảm từ 0.001
+        self.min_area_abs = 400            # Giảm từ 600
+        self.min_width = 20                # Giảm từ 30
+        self.min_height = 20               # Giảm từ 30
+        self.max_figures = 25              # Tăng từ 20
+        self.max_area_ratio = 0.80         # Tăng từ 0.70
         
         # Tham số cắt ảnh
-        self.smart_padding = 25           # Giảm từ 30
-        self.quality_threshold = 0.25     # Tăng từ 0.15
-        self.edge_margin = 0.01           # Tăng từ 0.005
+        self.smart_padding = 30            # Tăng từ 25
+        self.quality_threshold = 0.15      # Giảm từ 0.25
+        self.edge_margin = 0.005           # Giảm từ 0.01
         
         # Tham số confidence
-        self.confidence_threshold = 30    # Tăng từ 20
+        self.confidence_threshold = 15     # Giảm từ 30
         
         # Tham số morphology
         self.morph_kernel_size = 2
@@ -634,11 +652,11 @@ class SuperEnhancedImageExtractor:
         self.erode_iterations = 1
         
         # Tham số edge detection
-        self.canny_low = 40               # Tăng từ 30
-        self.canny_high = 100             # Tăng từ 80
+        self.canny_low = 30                # Giảm từ 40
+        self.canny_high = 80               # Giảm từ 100
         self.blur_kernel = 3
         
-        # Content-Based Filter với Ultra Text Filter
+        # Content-Based Filter với Balanced Text Filter
         self.content_filter = ContentBasedFigureFilter()
         self.enable_content_filter = True
         
@@ -647,7 +665,7 @@ class SuperEnhancedImageExtractor:
     
     def extract_figures_and_tables(self, image_bytes):
         """
-        Tách ảnh với Ultra Text Filter
+        Tách ảnh với Balanced Text Filter
         """
         if not CV2_AVAILABLE:
             return [], 0, 0
@@ -683,7 +701,7 @@ class SuperEnhancedImageExtractor:
             # Lọc và merge
             filtered_candidates = self._filter_and_merge_candidates(all_candidates, w, h)
             
-            # Content-Based Filter với Ultra Text Filter
+            # Content-Based Filter với Balanced Text Filter
             if self.enable_content_filter:
                 content_filtered = self.content_filter.analyze_content_and_filter(image_bytes, filtered_candidates)
                 filtered_candidates = content_filtered
@@ -727,7 +745,7 @@ class SuperEnhancedImageExtractor:
                     'bbox': (x, y, ww, hh),
                     'area': area,
                     'method': 'edge',
-                    'confidence': 35
+                    'confidence': 25  # Giảm từ 35
                 })
         
         return candidates
@@ -752,7 +770,7 @@ class SuperEnhancedImageExtractor:
                     'bbox': (x, y, ww, hh),
                     'area': area,
                     'method': 'contour',
-                    'confidence': 40
+                    'confidence': 30  # Giảm từ 40
                 })
         
         return candidates
@@ -780,7 +798,7 @@ class SuperEnhancedImageExtractor:
             
             if self._is_valid_candidate(x, y, ww, hh, area, w, h):
                 aspect_ratio = ww / (hh + 1e-6)
-                confidence = 60 if aspect_ratio > 1.5 else 40
+                confidence = 50 if aspect_ratio > 1.5 else 30  # Giảm từ 60/40
                 
                 candidates.append({
                     'bbox': (x, y, ww, hh),
@@ -816,7 +834,7 @@ class SuperEnhancedImageExtractor:
                     'bbox': (x, y, ww, hh),
                     'area': area,
                     'method': 'blob',
-                    'confidence': 38
+                    'confidence': 28  # Giảm từ 38
                 })
         
         return candidates
@@ -874,7 +892,7 @@ class SuperEnhancedImageExtractor:
             
             if union_area > 0:
                 iou = intersection_area / union_area
-                if iou > 0.3:  # Tăng threshold
+                if iou > 0.25:  # Giảm threshold từ 0.3
                     return True
         
         return False
@@ -887,25 +905,25 @@ class SuperEnhancedImageExtractor:
         area_ratio = candidate['area'] / (w * h)
         aspect_ratio = ww / (hh + 1e-6)
         
-        confidence = candidate.get('confidence', 30)
+        confidence = candidate.get('confidence', 20)  # Giảm từ 30
         
         # Bonus cho size phù hợp
-        if 0.02 < area_ratio < 0.4:
-            confidence += 25
-        elif 0.01 < area_ratio < 0.6:
+        if 0.015 < area_ratio < 0.5:  # Giảm min từ 0.02
+            confidence += 20  # Giảm từ 25
+        elif 0.005 < area_ratio < 0.7:  # Giảm min từ 0.01
             confidence += 10
         
         # Bonus cho aspect ratio
-        if 0.5 < aspect_ratio < 3.0:
-            confidence += 20
-        elif 0.3 < aspect_ratio < 5.0:
-            confidence += 10
+        if 0.4 < aspect_ratio < 4.0:  # Mở rộng range
+            confidence += 15  # Giảm từ 20
+        elif 0.2 < aspect_ratio < 6.0:  # Mở rộng range
+            confidence += 8   # Giảm từ 10
         
         # Bonus cho method
         if candidate['method'] == 'grid':
-            confidence += 15
+            confidence += 12  # Giảm từ 15
         elif candidate['method'] == 'edge':
-            confidence += 10
+            confidence += 8   # Giảm từ 10
         
         return min(100, confidence)
     
@@ -948,7 +966,8 @@ class SuperEnhancedImageExtractor:
                 "aspect_ratio": candidate["bbox"][2] / (candidate["bbox"][3] + 1e-6),
                 "method": candidate["method"],
                 "center_y": candidate["bbox"][1] + candidate["bbox"][3] // 2,
-                "center_x": candidate["bbox"][0] + candidate["bbox"][2] // 2
+                "center_x": candidate["bbox"][0] + candidate["bbox"][2] // 2,
+                "override_reason": candidate.get("override_reason", None)
             })
         
         return final_figures
@@ -999,8 +1018,13 @@ class SuperEnhancedImageExtractor:
             else:
                 tag = f"[🖼️ HÌNH: {figure['name']}]"
             
+            # Thêm thông tin override nếu có
+            override_info = ""
+            if figure.get('override_reason'):
+                override_info = f" (kept: {figure['override_reason']})"
+            
             result_lines.insert(actual_insertion, "")
-            result_lines.insert(actual_insertion + 1, tag)
+            result_lines.insert(actual_insertion + 1, tag + override_info)
             result_lines.insert(actual_insertion + 2, "")
             
             offset += 3
@@ -1049,8 +1073,10 @@ class SuperEnhancedImageExtractor:
             center_x, center_y = fig['center_x'], fig['center_y']
             draw.ellipse([center_x-8, center_y-8, center_x+8, center_y+8], fill=color)
             
-            # Simple label
+            # Simple label with override info
             label = f"{fig['name']} ({fig['confidence']:.0f}%)"
+            if fig.get('override_reason'):
+                label += f" [{fig['override_reason']}]"
             draw.text((x + 5, y + 5), label, fill=color, stroke_width=2, stroke_fill='white')
         
         return img_pil
@@ -1225,9 +1251,9 @@ class EnhancedWordExporter:
             # Extract figure name
             fig_name = None
             if 'HÌNH:' in tag_line:
-                fig_name = tag_line.split('HÌNH:')[1].split(']')[0].strip()
+                fig_name = tag_line.split('HÌNH:')[1].split(']')[0].split('(')[0].strip()
             elif 'BẢNG:' in tag_line:
-                fig_name = tag_line.split('BẢNG:')[1].split(']')[0].strip()
+                fig_name = tag_line.split('BẢNG:')[1].split(']')[0].split('(')[0].strip()
             
             if not fig_name or not extracted_figures:
                 return
@@ -1298,10 +1324,14 @@ def display_beautiful_figures(figures, debug_img=None):
                     confidence_color = "🟢" if fig['confidence'] > 70 else "🟡" if fig['confidence'] > 50 else "🔴"
                     type_icon = "📊" if fig['is_table'] else "🖼️"
                     
+                    override_text = ""
+                    if fig.get('override_reason'):
+                        override_text = f"<br><small>✅ Kept: {fig['override_reason']}</small>"
+                    
                     st.markdown(f"""
                     <div style="background: #f0f0f0; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
                         <strong>{type_icon} {fig['name']}</strong><br>
-                        {confidence_color} {fig['confidence']:.1f}% | {fig['method']}
+                        {confidence_color} {fig['confidence']:.1f}% | {fig['method']}{override_text}
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -1323,13 +1353,13 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} {size_names[i]}"
 
 def main():
-    st.markdown('<h1 class="main-header">📝 PDF/LaTeX Converter - Ultra Text Filter</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📝 PDF/LaTeX Converter - Balanced Text Filter</h1>', unsafe_allow_html=True)
     
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">🎯 ULTRA TEXT FILTER - 100% LOẠI BỎ ẢNH DÍNH CHỮ</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ OCR simulation • ✅ Histogram analysis • ✅ 100% chính xác</p>
+        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER - LỌCTEXTMÀVẪNGIỮFIGURES</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Cân bằng precision vs recall • ✅ Override logic thông minh</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1350,11 +1380,11 @@ def main():
         
         # Cài đặt tách ảnh
         if CV2_AVAILABLE:
-            st.markdown("### 🎯 Ultra Text Filter")
-            enable_extraction = st.checkbox("Bật tách ảnh Ultra", value=True)
+            st.markdown("### ⚖️ Balanced Text Filter")
+            enable_extraction = st.checkbox("Bật tách ảnh Balanced", value=True)
             
             if enable_extraction:
-                st.markdown("**🧠 Ultra Text Filter Features:**")
+                st.markdown("**🧠 Balanced Text Filter Features:**")
                 st.markdown("""
                 <div style="background: #e8f5e8; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
                 <small>
@@ -1366,9 +1396,10 @@ def main():
                 • Geometric Structure Analysis<br>
                 • Whitespace Analysis<br>
                 • OCR Simulation<br><br>
-                ✅ <strong>100% loại bỏ ảnh dính chữ</strong><br>
-                ✅ <strong>Chỉ giữ figures thật sự</strong><br>
-                ✅ <strong>Không thông tin thừa</strong>
+                ⚖️ <strong>Cân bằng precision vs recall</strong><br>
+                🧠 <strong>Override logic thông minh</strong><br>
+                ✅ <strong>Giữ lại figures có potential</strong><br>
+                🎯 <strong>3+ indicators mới loại bỏ</strong>
                 </small>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1376,17 +1407,22 @@ def main():
                 # Debug mode
                 debug_mode = st.checkbox("Debug mode", value=False)
                 
-                with st.expander("🔧 Cài đặt Ultra Filter"):
-                    text_threshold = st.slider("Text Density Threshold", 0.1, 0.8, 0.4, 0.1)
-                    min_visual = st.slider("Min Visual Complexity", 0.1, 1.0, 0.5, 0.1)
-                    min_diagram = st.slider("Min Diagram Score", 0.1, 1.0, 0.3, 0.1)
-                    min_quality = st.slider("Min Figure Quality", 0.1, 1.0, 0.3, 0.1)
-                    min_size = st.slider("Min Figure Size", 500, 3000, 2000, 100)
+                with st.expander("🔧 Cài đặt Balanced Filter"):
+                    text_threshold = st.slider("Text Density Threshold", 0.1, 0.9, 0.7, 0.1)
+                    min_visual = st.slider("Min Visual Complexity", 0.1, 1.0, 0.2, 0.1)
+                    min_diagram = st.slider("Min Diagram Score", 0.0, 1.0, 0.1, 0.1)
+                    min_quality = st.slider("Min Figure Quality", 0.1, 1.0, 0.15, 0.05)
+                    min_size = st.slider("Min Figure Size", 200, 2000, 1000, 100)
                     
                     st.markdown("**Advanced Options:**")
-                    line_threshold = st.slider("Line Density Threshold", 0.05, 0.5, 0.15, 0.05)
-                    char_threshold = st.slider("Character Pattern Threshold", 0.1, 1.0, 0.6, 0.1)
-                    whitespace_threshold = st.slider("Whitespace Ratio Threshold", 0.1, 0.8, 0.3, 0.1)
+                    line_threshold = st.slider("Line Density Threshold", 0.05, 0.5, 0.25, 0.05)
+                    char_threshold = st.slider("Character Pattern Threshold", 0.1, 1.0, 0.8, 0.1)
+                    whitespace_threshold = st.slider("Whitespace Ratio Threshold", 0.1, 0.8, 0.45, 0.05)
+                    
+                    st.markdown("**Override Settings:**")
+                    enable_geometry_override = st.checkbox("Geometry Override", value=True)
+                    enable_size_override = st.checkbox("Size Override", value=True)
+                    enable_complexity_override = st.checkbox("Complexity Override", value=True)
         else:
             enable_extraction = False
             debug_mode = False
@@ -1396,49 +1432,36 @@ def main():
         
         # Thông tin
         st.markdown("""
-        ### 🎯 **Ultra Text Filter:**
+        ### ⚖️ **Balanced Text Filter:**
         
-        **🧠 7 Phương pháp phân tích:**
+        **🧠 Ưu điểm chính:**
         
-        1. **Advanced Text Density**
-           - Morphological text detection
-           - Edge-based text detection
-           - Kết hợp nhiều kernel
+        1. **Cân bằng Precision vs Recall**
+           - Không quá nghiêm ngặt như Ultra
+           - Không quá lỏng lẻo
+           - Ưu tiên giữ lại figures
         
-        2. **Line Structure Analysis**
-           - Phát hiện horizontal lines
-           - Đếm số dòng text
-           - Tính mật độ dòng
+        2. **Override Logic thông minh**
+           - Geometry Override: Giữ figures có geometric complexity
+           - Size Override: Giữ figures lớn có structure
+           - Complexity Override: Giữ figures nhỏ nhưng phức tạp
         
-        3. **Character Pattern Detection**
-           - Phát hiện small components
-           - Phân tích kích thước ký tự
-           - Aspect ratio analysis
+        3. **Multiple Indicators Required**
+           - Cần ít nhất 3 strong text indicators
+           - Mới coi là text thật sự
+           - Giảm false positives
         
-        4. **Histogram Analysis**
-           - Bimodal distribution detection
-           - Peak distance analysis
-           - Entropy calculation
+        4. **Flexible Thresholds**
+           - Text density: 0.7 (vs 0.4 Ultra)
+           - Min visual complexity: 0.2 (vs 0.5 Ultra)
+           - Min size: 1000 (vs 2000 Ultra)
+           - Aspect ratio: rộng hơn
         
-        5. **Geometric Structure Analysis**
-           - Line detection (HoughLinesP)
-           - Circle detection
-           - Complex contour analysis
-        
-        6. **Whitespace Analysis**
-           - Tỷ lệ khoảng trắng
-           - Text có nhiều whitespace
-        
-        7. **OCR Simulation**
-           - Horizontal projection
-           - Peak detection
-           - Text line simulation
-        
-        **🎯 Kết quả:**
-        - **100% loại bỏ ảnh dính chữ**
-        - **Chỉ giữ figures thật sự**
-        - **Không có false positives**
-        - **Giao diện sạch sẽ**
+        **🎯 Kết quả mong đợi:**
+        - **Lọc được phần lớn text**
+        - **Giữ lại hầu hết figures**
+        - **Ít false negatives**
+        - **Override reasoning rõ ràng**
         """)
     
     if not api_key:
@@ -1455,7 +1478,7 @@ def main():
         if enable_extraction and CV2_AVAILABLE:
             image_extractor = SuperEnhancedImageExtractor()
             
-            # Apply Ultra Filter settings
+            # Apply Balanced Filter settings
             if 'text_threshold' in locals():
                 image_extractor.content_filter.text_filter.text_density_threshold = text_threshold
             if 'min_visual' in locals():
@@ -1534,7 +1557,7 @@ def main():
                         img.save(img_buffer, format='PNG')
                         img_bytes = img_buffer.getvalue()
                         
-                        # Tách ảnh với Ultra Text Filter
+                        # Tách ảnh với Balanced Text Filter
                         extracted_figures = []
                         debug_img = None
                         
@@ -1603,17 +1626,32 @@ D) [đáp án D hoàn chỉnh]
                     
                     # Thống kê
                     if enable_extraction and CV2_AVAILABLE and all_extracted_figures:
-                        st.markdown("### 📊 Thống kê Ultra Text Filter")
+                        st.markdown("### 📊 Thống kê Balanced Text Filter")
                         
-                        col_1, col_2, col_3 = st.columns(3)
+                        col_1, col_2, col_3, col_4 = st.columns(4)
                         with col_1:
-                            st.metric("🎯 Figures được giữ lại", len(all_extracted_figures))
+                            st.metric("⚖️ Figures được giữ lại", len(all_extracted_figures))
                         with col_2:
                             tables = sum(1 for f in all_extracted_figures if f['is_table'])
                             st.metric("📊 Bảng", tables)
                         with col_3:
                             figures_count = len(all_extracted_figures) - tables
                             st.metric("🖼️ Hình", figures_count)
+                        with col_4:
+                            overrides = sum(1 for f in all_extracted_figures if f.get('override_reason'))
+                            st.metric("🧠 Overrides", overrides)
+                        
+                        # Override statistics
+                        if overrides > 0:
+                            st.markdown("**🧠 Override Reasons:**")
+                            override_counts = {}
+                            for f in all_extracted_figures:
+                                if f.get('override_reason'):
+                                    reason = f['override_reason']
+                                    override_counts[reason] = override_counts.get(reason, 0) + 1
+                            
+                            for reason, count in override_counts.items():
+                                st.markdown(f"• **{reason}**: {count} figures")
                         
                         # Hiển thị figures
                         for debug_img, page_num, figures in all_debug_images:
@@ -1671,11 +1709,11 @@ D) [đáp án D hoàn chỉnh]
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>🎯 ULTRA TEXT FILTER - 100% LOẠI BỎ ẢNH DÍNH CHỮ</h3>
-        <p><strong>✅ 7 phương pháp phân tích siêu chính xác</strong></p>
-        <p><strong>✅ 100% loại bỏ text regions</strong></p>
-        <p><strong>✅ Chỉ giữ figures thật sự</strong></p>
-        <p><strong>✅ Giao diện sạch sẽ, không thông tin thừa</strong></p>
+        <h3>⚖️ BALANCED TEXT FILTER - CÂN BẰNG PRECISION VS RECALL</h3>
+        <p><strong>✅ 7 phương pháp phân tích cân bằng</strong></p>
+        <p><strong>⚖️ Lọc text mà vẫn giữ figures</strong></p>
+        <p><strong>🧠 Override logic thông minh</strong></p>
+        <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
