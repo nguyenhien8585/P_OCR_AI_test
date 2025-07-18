@@ -276,48 +276,61 @@ class GoogleOCRService:
 
 class PhoneImageProcessor:
     """
-    Xử lý ảnh chụp từ điện thoại để tối ưu cho OCR - Enhanced Version
+    Xử lý ảnh chụp từ điện thoại để tối ưu cho OCR - Enhanced Version với Screenshot Support
     """
     
     @staticmethod
     def process_phone_image(image_bytes, auto_enhance=True, auto_rotate=True, 
                           perspective_correct=True, text_enhance=True, 
-                          crop_document=True, noise_reduction=True):
+                          crop_document=True, noise_reduction=True, 
+                          is_screenshot=False):
         """
-        Xử lý ảnh điện thoại với các tùy chọn nâng cao
+        Xử lý ảnh điện thoại với các tùy chọn nâng cao và hỗ trợ screenshot
         """
         try:
             # Đọc ảnh
             img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            
+            # Detect if this is likely a screenshot
+            if not is_screenshot:
+                is_screenshot = PhoneImageProcessor._detect_screenshot(img_pil)
             
             # Convert to numpy for CV2 processing if available
             if CV2_AVAILABLE:
                 img = np.array(img_pil)
                 original_img = img.copy()
                 
-                # Step 1: Noise reduction (if enabled)
-                if noise_reduction:
-                    img = PhoneImageProcessor._reduce_noise(img)
+                # Screenshot-specific processing
+                if is_screenshot:
+                    img = PhoneImageProcessor._process_screenshot(img)
+                else:
+                    # Regular phone photo processing
+                    # Step 1: Noise reduction (if enabled)
+                    if noise_reduction:
+                        img = PhoneImageProcessor._reduce_noise(img)
+                    
+                    # Step 2: Document detection and cropping
+                    if crop_document:
+                        img = PhoneImageProcessor._smart_document_crop(img)
+                    
+                    # Step 3: Auto rotate & straighten
+                    if auto_rotate:
+                        img = PhoneImageProcessor._enhanced_auto_rotate(img)
+                    
+                    # Step 4: Perspective correction
+                    if perspective_correct:
+                        img = PhoneImageProcessor._enhanced_perspective_correction(img)
                 
-                # Step 2: Document detection and cropping
-                if crop_document:
-                    img = PhoneImageProcessor._smart_document_crop(img)
-                
-                # Step 3: Auto rotate & straighten
-                if auto_rotate:
-                    img = PhoneImageProcessor._enhanced_auto_rotate(img)
-                
-                # Step 4: Perspective correction
-                if perspective_correct:
-                    img = PhoneImageProcessor._enhanced_perspective_correction(img)
-                
-                # Step 5: Auto enhance
+                # Step 5: Auto enhance (for both types)
                 if auto_enhance:
                     img = PhoneImageProcessor._enhanced_auto_enhance(img)
                 
-                # Step 6: Text enhancement
+                # Step 6: Text enhancement (enhanced for screenshots)
                 if text_enhance:
-                    img = PhoneImageProcessor._enhanced_text_enhancement(img)
+                    if is_screenshot:
+                        img = PhoneImageProcessor._enhanced_screenshot_text_enhancement(img)
+                    else:
+                        img = PhoneImageProcessor._enhanced_text_enhancement(img)
                 
                 # Convert back to PIL
                 processed_img = Image.fromarray(img)
@@ -342,6 +355,128 @@ class PhoneImageProcessor:
         except Exception as e:
             st.error(f"❌ Lỗi xử lý ảnh: {str(e)}")
             return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    
+    @staticmethod
+    def _detect_screenshot(img_pil):
+        """
+        Detect nếu ảnh là screenshot dựa trên các đặc điểm
+        """
+        try:
+            width, height = img_pil.size
+            
+            # Screenshots thường có:
+            # 1. Aspect ratio phổ biến của màn hình
+            aspect_ratio = width / height
+            common_ratios = [16/9, 16/10, 4/3, 3/2, 19.5/9, 18/9]  # Phone và desktop ratios
+            
+            # 2. Kích thước pixel perfect (số chẵn)
+            is_pixel_perfect = (width % 2 == 0) and (height % 2 == 0)
+            
+            # 3. Độ phân giải cao
+            is_high_res = (width * height) > 500000  # > 0.5MP
+            
+            # 4. Check aspect ratio gần với ratios phổ biến
+            aspect_match = any(abs(aspect_ratio - ratio) < 0.1 for ratio in common_ratios)
+            
+            # 5. Convert to array để check uniformity
+            if CV2_AVAILABLE:
+                img_array = np.array(img_pil)
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                
+                # Screenshots có edges sắc nét hơn
+                edges = cv2.Canny(gray, 100, 200)
+                edge_density = np.sum(edges > 0) / (width * height)
+                has_sharp_edges = edge_density > 0.05
+                
+                # Screenshots có ít noise hơn
+                laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                is_clean = laplacian_var > 100  # Clean, sharp image
+                
+                screenshot_score = sum([
+                    is_pixel_perfect,
+                    is_high_res,
+                    aspect_match,
+                    has_sharp_edges,
+                    is_clean
+                ])
+                
+                return screenshot_score >= 3
+            else:
+                # Fallback without CV2
+                screenshot_score = sum([
+                    is_pixel_perfect,
+                    is_high_res,
+                    aspect_match
+                ])
+                return screenshot_score >= 2
+                
+        except Exception:
+            return False
+    
+    @staticmethod
+    def _process_screenshot(img):
+        """
+        Xử lý đặc biệt cho screenshot
+        """
+        try:
+            # Screenshots thường đã sạch, chỉ cần enhance nhẹ
+            
+            # 1. Sharpening nhẹ
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+            sharpened = cv2.filter2D(img, -1, kernel)
+            
+            # 2. Contrast enhancement nhẹ
+            alpha = 1.1  # Contrast
+            beta = 5     # Brightness
+            enhanced = cv2.convertScaleAbs(sharpened, alpha=alpha, beta=beta)
+            
+            return enhanced
+            
+        except Exception:
+            return img
+    
+    @staticmethod
+    def _enhanced_screenshot_text_enhancement(img):
+        """
+        Text enhancement đặc biệt cho screenshot
+        """
+        try:
+            # Convert to grayscale for processing
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img.copy()
+            
+            # Screenshots có text sắc nét, chỉ cần enhancement nhẹ
+            
+            # 1. Adaptive histogram equalization
+            clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+            
+            # 2. Unsharp masking nhẹ
+            gaussian = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
+            unsharp_mask = cv2.addWeighted(enhanced, 1.5, gaussian, -0.5, 0)
+            
+            # 3. Optional binarization for very clean text
+            mean_intensity = np.mean(unsharp_mask)
+            if mean_intensity > 200:  # Very bright image
+                # Apply gentle thresholding
+                _, binary = cv2.threshold(unsharp_mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                # Blend with original
+                final = cv2.addWeighted(unsharp_mask, 0.7, binary, 0.3, 0)
+            else:
+                final = unsharp_mask
+            
+            # Convert back to RGB if needed
+            if len(img.shape) == 3:
+                final_rgb = cv2.cvtColor(final, cv2.COLOR_GRAY2RGB)
+            else:
+                final_rgb = final
+            
+            return final_rgb
+            
+        except Exception:
+            return img
     
     @staticmethod
     def _reduce_noise(img):
@@ -1685,17 +1820,25 @@ class SuperEnhancedImageExtractor:
             return []
     
     def _detect_by_grid(self, gray_img, w, h):
-        """Grid detection với error handling"""
+        """Grid detection với error handling - Improved for complete table detection"""
         try:
-            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, w//20), 1))
+            # Method 1: Standard grid detection
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, w//15), 1))  # Smaller kernel
             horizontal_lines = cv2.morphologyEx(gray_img, cv2.MORPH_OPEN, horizontal_kernel)
             
-            vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(1, h//20)))
+            vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(1, h//15)))  # Smaller kernel
             vertical_lines = cv2.morphologyEx(gray_img, cv2.MORPH_OPEN, vertical_kernel)
             
             grid_mask = cv2.bitwise_or(horizontal_lines, vertical_lines)
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-            grid_dilated = cv2.dilate(grid_mask, kernel, iterations=2)
+            
+            # Method 2: Enhanced table detection for complete tables
+            enhanced_grid = self._detect_complete_tables(gray_img, w, h)
+            
+            # Combine both methods
+            combined_grid = cv2.bitwise_or(grid_mask, enhanced_grid)
+            
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            grid_dilated = cv2.dilate(combined_grid, kernel, iterations=1)
             
             contours, _ = cv2.findContours(grid_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
@@ -1707,14 +1850,28 @@ class SuperEnhancedImageExtractor:
                     
                     if self._is_valid_candidate(x, y, ww, hh, area, w, h):
                         aspect_ratio = ww / max(hh, 1)
-                        confidence = 50 if aspect_ratio > 1.5 else 30
+                        
+                        # Enhanced confidence for complete tables
+                        confidence = 30
+                        if self._is_complete_table(gray_img[y:y+hh, x:x+ww]):
+                            confidence = 70
+                        elif aspect_ratio > 2.0:  # Wide tables
+                            confidence = 55
+                        elif aspect_ratio > 1.5:
+                            confidence = 50
+                        
+                        # Detect table type
+                        is_table = aspect_ratio > 1.2
+                        is_variation_table = self._is_variation_table(gray_img[y:y+hh, x:x+ww])
                         
                         candidates.append({
                             'bbox': (x, y, ww, hh),
                             'area': area,
                             'method': 'grid',
                             'confidence': confidence,
-                            'is_table': aspect_ratio > 1.5
+                            'is_table': is_table,
+                            'is_variation_table': is_variation_table,
+                            'table_type': 'variation' if is_variation_table else 'standard'
                         })
                 except Exception:
                     continue
@@ -1722,6 +1879,102 @@ class SuperEnhancedImageExtractor:
             return candidates
         except Exception:
             return []
+    
+    def _detect_complete_tables(self, gray_img, w, h):
+        """
+        Detect complete tables including Đúng/Sai columns and variation tables
+        """
+        try:
+            # Enhanced edge detection for table borders
+            blurred = cv2.GaussianBlur(gray_img, (3, 3), 0)
+            edges = cv2.Canny(blurred, 30, 90)
+            
+            # Detect horizontal lines (table rows)
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//8, 1))
+            horizontal_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
+            
+            # Detect vertical lines (table columns) - more sensitive
+            vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//20))
+            vertical_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, vertical_kernel)
+            
+            # Combine to form complete table structure
+            table_structure = cv2.bitwise_or(horizontal_lines, vertical_lines)
+            
+            # Dilate to connect broken lines
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            table_structure = cv2.dilate(table_structure, kernel, iterations=2)
+            
+            # Fill enclosed areas to capture complete tables
+            contours, _ = cv2.findContours(table_structure, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Create mask for complete tables
+            table_mask = np.zeros_like(gray_img)
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area > (w * h * 0.01):  # At least 1% of image
+                    cv2.fillPoly(table_mask, [contour], 255)
+            
+            return table_mask
+            
+        except Exception:
+            return np.zeros_like(gray_img)
+    
+    def _is_complete_table(self, table_roi):
+        """
+        Check if ROI contains a complete table structure
+        """
+        try:
+            if table_roi.shape[0] < 50 or table_roi.shape[1] < 100:
+                return False
+            
+            # Check for multiple rows and columns
+            h, w = table_roi.shape[:2] if len(table_roi.shape) == 2 else table_roi.shape[:2]
+            
+            # Horizontal line detection
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//4, 1))
+            horizontal_lines = cv2.morphologyEx(table_roi, cv2.MORPH_OPEN, horizontal_kernel)
+            h_contours, _ = cv2.findContours(horizontal_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Vertical line detection
+            vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//4))
+            vertical_lines = cv2.morphologyEx(table_roi, cv2.MORPH_OPEN, vertical_kernel)
+            v_contours, _ = cv2.findContours(vertical_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # A complete table should have at least 2 horizontal and 3 vertical lines
+            return len(h_contours) >= 2 and len(v_contours) >= 3
+            
+        except Exception:
+            return False
+    
+    def _is_variation_table(self, table_roi):
+        """
+        Detect if this is a variation table (bảng biến thiên)
+        """
+        try:
+            if table_roi.shape[0] < 30 or table_roi.shape[1] < 60:
+                return False
+            
+            h, w = table_roi.shape[:2] if len(table_roi.shape) == 2 else table_roi.shape[:2]
+            
+            # Variation tables often have:
+            # 1. More horizontal divisions (for different rows like x, f'(x), f(x))
+            # 2. Specific aspect ratio (wider than tall)
+            # 3. Multiple levels/tiers
+            
+            aspect_ratio = w / h
+            if aspect_ratio < 1.5:  # Should be wider than tall
+                return False
+            
+            # Check for multiple horizontal divisions
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//6, 1))
+            horizontal_lines = cv2.morphologyEx(table_roi, cv2.MORPH_OPEN, horizontal_kernel)
+            h_contours, _ = cv2.findContours(horizontal_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Variation tables typically have 3+ horizontal sections
+            return len(h_contours) >= 3 and aspect_ratio > 2.0
+            
+        except Exception:
+            return False
     
     def _detect_by_blobs(self, gray_img, w, h):
         """Blob detection với error handling"""
@@ -2995,10 +3248,13 @@ Ví dụ: Tên | Tuổi | Điểm
         
         # Tab mới: Ảnh điện thoại
         with tab3:
-            st.header("📱 Xử lý ảnh chụp điện thoại")
+            st.header("📱 Xử lý ảnh chụp điện thoại & Screenshot")
             st.markdown("""
             <div style="background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c8 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
-                <h4>📱 Tối ưu cho ảnh chụp điện thoại:</h4>
+                <h4>📱 Tối ưu cho ảnh chụp điện thoại & 📺 Screenshot:</h4>
+                <p>• 🔍 <strong>Auto-detect screenshot vs phone photo</strong></p>
+                <p>• 📺 <strong>Screenshot mode:</strong> Enhanced cho ảnh chụp màn hình (bảng Đúng/Sai, etc.)</p>
+                <p>• 📱 <strong>Phone photo mode:</strong> Full processing pipeline</p>
                 <p>• 🔄 Auto-rotate và căn chỉnh thông minh</p>
                 <p>• ✨ Enhance chất lượng ảnh với CLAHE + Gamma</p>
                 <p>• 📐 Enhanced perspective correction</p>
@@ -3007,10 +3263,12 @@ Ví dụ: Tên | Tuổi | Điểm
                 <p>• 🧹 Noise reduction với bilateral filter</p>
                 <p>• ⚖️ Balanced Text Filter integration</p>
                 <p>• 🤖 Google OCR figure counting</p>
+                <p>• 📊 <strong>Enhanced table detection:</strong> Không cắt cột Đúng/Sai</p>
+                <p>• 📈 <strong>Variation table detection:</strong> Tách bảng biến thiên</p>
             </div>
             """, unsafe_allow_html=True)
             
-            uploaded_phone_image = st.file_uploader("Chọn ảnh chụp từ điện thoại", type=['png', 'jpg', 'jpeg'], key="phone_upload")
+            uploaded_phone_image = st.file_uploader("Chọn ảnh chụp từ điện thoại hoặc screenshot", type=['png', 'jpg', 'jpeg'], key="phone_upload")
             
             if uploaded_phone_image:
                 col1, col2 = st.columns([1, 1])
@@ -3022,36 +3280,64 @@ Ví dụ: Tên | Tuổi | Điểm
                     phone_image_pil = Image.open(uploaded_phone_image)
                     st.image(phone_image_pil, caption=f"Ảnh gốc: {uploaded_phone_image.name}", use_column_width=True)
                     
+                    # Detect image type
+                    if CV2_AVAILABLE:
+                        is_screenshot = PhoneImageProcessor._detect_screenshot(phone_image_pil)
+                        if is_screenshot:
+                            st.success("📺 **Detected: Screenshot** - Sẽ dùng chế độ xử lý screenshot")
+                        else:
+                            st.info("📱 **Detected: Phone photo** - Sẽ dùng chế độ xử lý ảnh chụp")
+                    
                     # Thông tin ảnh
                     st.markdown("**📊 Thông tin ảnh:**")
                     st.write(f"• Kích thước: {phone_image_pil.size[0]} x {phone_image_pil.size[1]}")
                     st.write(f"• Mode: {phone_image_pil.mode}")
                     st.write(f"• Dung lượng: {format_file_size(uploaded_phone_image.size)}")
+                    aspect_ratio = phone_image_pil.size[0] / phone_image_pil.size[1]
+                    st.write(f"• Aspect ratio: {aspect_ratio:.2f}")
                     
                     # Cài đặt xử lý
                     st.markdown("### ⚙️ Cài đặt xử lý")
                     
+                    # Override auto detection
+                    force_screenshot = st.checkbox("🔧 Force Screenshot Mode", value=False, key="force_screenshot")
+                    if force_screenshot:
+                        is_screenshot = True
+                        st.warning("⚠️ Forcing screenshot mode - sẽ bỏ qua perspective correction và document cropping")
+                    
                     auto_enhance = st.checkbox("✨ Auto enhance chất lượng", value=True, key="phone_enhance")
-                    auto_rotate = st.checkbox("🔄 Auto rotate & straighten", value=True, key="phone_rotate")
-                    perspective_correct = st.checkbox("📐 Perspective correction", value=True, key="phone_perspective")
+                    
+                    if not force_screenshot and not is_screenshot:
+                        auto_rotate = st.checkbox("🔄 Auto rotate & straighten", value=True, key="phone_rotate")
+                        perspective_correct = st.checkbox("📐 Perspective correction", value=True, key="phone_perspective")
+                        crop_document = st.checkbox("📄 Smart document crop", value=True, key="phone_crop")
+                        noise_reduction = st.checkbox("🧹 Noise reduction", value=True, key="phone_noise")
+                    else:
+                        # Screenshot mode - simpler processing
+                        auto_rotate = False
+                        perspective_correct = False
+                        crop_document = False
+                        noise_reduction = False
+                        st.info("📺 Screenshot mode: Auto-rotate, perspective correction và document crop đã tắt")
+                    
                     text_enhance = st.checkbox("🔍 Enhance text clarity", value=True, key="phone_text")
                     
-                    # Thêm các options mới
-                    st.markdown("**🔧 Advanced Options:**")
-                    crop_document = st.checkbox("📄 Smart document crop", value=True, key="phone_crop")
-                    noise_reduction = st.checkbox("🧹 Noise reduction", value=True, key="phone_noise")
-                    
+                    # Figure extraction settings
                     if enable_extraction and CV2_AVAILABLE:
-                        extract_phone_figures = st.checkbox("🎯 Tách figures", value=True, key="phone_extract")
+                        extract_phone_figures = st.checkbox("🎯 Tách figures & tables", value=True, key="phone_extract")
                         if extract_phone_figures:
-                            phone_confidence = st.slider("Confidence (%)", 50, 95, 65, 5, key="phone_conf")
+                            phone_confidence = st.slider("Confidence (%)", 50, 95, 60 if is_screenshot else 65, 5, key="phone_conf")
+                            
+                            # Enhanced table detection
+                            detect_variation_tables = st.checkbox("📈 Detect bảng biến thiên", value=True, key="variation_tables")
+                            enhance_table_detection = st.checkbox("📊 Enhanced table detection (Đúng/Sai)", value=True, key="enhance_tables")
                     else:
                         extract_phone_figures = False
                 
                 with col2:
                     st.subheader("🔄 Xử lý & Kết quả")
                     
-                    if st.button("🚀 Xử lý ảnh điện thoại", type="primary", key="process_phone"):
+                    if st.button("🚀 Xử lý ảnh điện thoại/Screenshot", type="primary", key="process_phone"):
                         phone_img_bytes = uploaded_phone_image.getvalue()
                         
                         # Bước 1: Xử lý ảnh
@@ -3064,10 +3350,14 @@ Ví dụ: Tên | Tuổi | Điểm
                                     perspective_correct=perspective_correct,
                                     text_enhance=text_enhance,
                                     crop_document=crop_document,
-                                    noise_reduction=noise_reduction
+                                    noise_reduction=noise_reduction,
+                                    is_screenshot=force_screenshot or is_screenshot
                                 )
                                 
-                                st.success("✅ Xử lý ảnh thành công!")
+                                if force_screenshot or is_screenshot:
+                                    st.success("✅ Screenshot xử lý thành công!")
+                                else:
+                                    st.success("✅ Ảnh điện thoại xử lý thành công!")
                                 
                                 # Hiển thị ảnh đã xử lý
                                 st.markdown("**📸 Ảnh đã xử lý:**")
@@ -3088,11 +3378,16 @@ Ví dụ: Tên | Tuổi | Điểm
                         phone_h, phone_w = 0, 0
                         
                         if extract_phone_figures and enable_extraction and CV2_AVAILABLE and image_extractor:
-                            with st.spinner("🎯 Đang tách figures..."):
+                            with st.spinner("🎯 Đang tách figures & tables..."):
                                 try:
                                     # Apply settings
                                     original_threshold = image_extractor.final_confidence_threshold
                                     image_extractor.final_confidence_threshold = phone_confidence
+                                    
+                                    # Enhance table detection if enabled
+                                    if 'enhance_table_detection' in locals() and enhance_table_detection:
+                                        # Boost grid detection confidence
+                                        image_extractor.content_filter.text_filter.min_meaningful_size = 500  # Lower requirement for tables
                                     
                                     figures, phone_h, phone_w, _, _ = image_extractor.extract_figures_and_tables(processed_bytes, 0, 0)
                                     phone_extracted_figures = figures
@@ -3102,7 +3397,16 @@ Ví dụ: Tên | Tuổi | Điểm
                                     
                                     if figures:
                                         debug_img = image_extractor.create_beautiful_debug_visualization(processed_bytes, figures)
-                                        st.success(f"🎯 Đã tách được {len(figures)} figures!")
+                                        
+                                        # Phân loại figures
+                                        tables_count = sum(1 for f in figures if f.get('is_table', False))
+                                        variation_tables = sum(1 for f in figures if f.get('is_variation_table', False))
+                                        figures_count = len(figures) - tables_count
+                                        
+                                        success_msg = f"🎯 Đã tách được {len(figures)} items: {figures_count} figures, {tables_count} tables"
+                                        if variation_tables > 0:
+                                            success_msg += f", {variation_tables} bảng biến thiên"
+                                        st.success(success_msg + "!")
                                         
                                         with st.expander("🔍 Xem figures đã tách"):
                                             display_beautiful_figures(figures, debug_img)
@@ -3115,8 +3419,55 @@ Ví dụ: Tên | Tuổi | Điểm
                         # Bước 3: Chuyển đổi text
                         with st.spinner("📝 Đang chuyển đổi text..."):
                             try:
-                                # Prompt với hướng dẫn cho ảnh điện thoại
-                                phone_prompt = """
+                                # Prompt với hướng dẫn cho ảnh điện thoại/screenshot
+                                if force_screenshot or is_screenshot:
+                                    phone_prompt = """
+Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
+
+📺 ĐẶC BIỆT CHO SCREENSHOT:
+- Ảnh rất sắc nét, chất lượng cao
+- Đọc chính xác từng ký tự, số, ký hiệu
+- Đặc biệt chú ý đến bảng với cột "Đúng" và "Sai"
+- Bảng biến thiên có cấu trúc đặc biệt
+
+🎯 YÊU CẦU ĐỊNH DẠNG:
+
+1. **Bảng Đúng/Sai:**
+```
+| Mệnh đề | Đúng | Sai |
+|---------|------|-----|
+| (a) Hàm số đã cho có đạo hàm là ${f'(x) = 3x^2 - 12}$ | ☐ | ☐ |
+| (b) Phương trình ${f'(x) = 0}$ có tập nghiệm là ${S = \\{z\\}}$ | ☐ | ☐ |
+| (c) ${f(2) = 24}$ | ☐ | ☐ |
+| (d) Giá trị lớn nhất của hàm số ${f(x)}$ trên đoạn ${[-3;3]}$ bằng 24 | ☐ | ☐ |
+```
+
+2. **Bảng biến thiên:**
+```
+| x | ${-\\infty}$ | ... | ${+\\infty}$ |
+|---|-------------|-----|-------------|
+| ${f'(x)}$ | + | 0 | - | 0 | + |
+| ${f(x)}$ | ↗ | max | ↘ | min | ↗ |
+```
+
+3. **Câu hỏi trắc nghiệm:**
+```
+Câu X: [nội dung câu hỏi đầy đủ]
+A) [đáp án A hoàn chỉnh]
+B) [đáp án B hoàn chỉnh]
+C) [đáp án C hoàn chỉnh]  
+D) [đáp án D hoàn chỉnh]
+```
+
+4. **Công thức toán học - LUÔN dùng ${...}$:**
+- ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
+
+⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
+📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
+🔲 Dùng ☐ cho checkbox trống trong cột Đúng/Sai!
+"""
+                                else:
+                                    phone_prompt = """
 Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
 
 📱 ĐẶC BIỆT CHO ẢNH ĐIỆN THOẠI:
@@ -3137,7 +3488,6 @@ D) [đáp án D hoàn chỉnh]
 
 2. **Công thức toán học - LUÔN dùng ${...}$:**
 - ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
-- ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
 
 3. **📊 Bảng dữ liệu - Format linh hoạt:**
 ```
@@ -3149,7 +3499,7 @@ Option 2 (Single-line):
 Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45) Số ngày | 6 | 6 | 4 | 1 | 1
 ```
 
-⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
+⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức!
 📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
 """
                                 
