@@ -556,55 +556,298 @@ class BalancedTextFilter:
         
         return filtered
 
-class ContentBasedFigureFilter:
+class GoogleOCRService:
     """
-    Bộ lọc thông minh với Balanced Text Filter
+    Google Apps Script OCR Service để đếm figures trong ảnh
     """
     
-    def __init__(self):
+    def __init__(self, api_url: str, api_key: str):
+        self.api_url = api_url
+        self.api_key = api_key
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Content-Type': 'application/json',
+            'User-Agent': 'PDF-LaTeX-Converter/1.0'
+        })
+    
+    def analyze_image_content(self, image_bytes, detect_figures=True, detect_tables=True):
+        """
+        Phân tích nội dung ảnh và đếm số lượng figures/tables
+        """
+        try:
+            # Encode image
+            encoded_image = base64.b64encode(image_bytes).decode('utf-8')
+            
+            # Prepare payload
+            payload = {
+                "key": self.api_key,
+                "action": "analyze_content",
+                "image": encoded_image,
+                "options": {
+                    "detect_figures": detect_figures,
+                    "detect_tables": detect_tables,
+                    "return_coordinates": True,
+                    "confidence_threshold": 0.7
+                }
+            }
+            
+            # Call API
+            response = self.session.post(self.api_url, json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return self._process_ocr_response(result)
+            else:
+                st.warning(f"⚠️ OCR API error: {response.status_code}")
+                return self._get_fallback_result()
+                
+        except requests.exceptions.Timeout:
+            st.warning("⚠️ OCR API timeout - sử dụng fallback method")
+            return self._get_fallback_result()
+        except Exception as e:
+            st.warning(f"⚠️ OCR API error: {str(e)} - sử dụng fallback method")
+            return self._get_fallback_result()
+    
+    def count_figures_in_text(self, text_content):
+        """
+        Đếm số lượng figures được nhắc đến trong text
+        """
+        try:
+            payload = {
+                "key": self.api_key,
+                "action": "count_figures",
+                "text": text_content,
+                "options": {
+                    "detect_patterns": ["hình", "figure", "fig", "bảng", "table", "biểu đồ", "đồ thị"]
+                }
+            }
+            
+            response = self.session.post(self.api_url, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get('figure_count', 0), result.get('table_count', 0)
+            else:
+                return 0, 0
+                
+        except Exception:
+            return 0, 0
+    
+    def _process_ocr_response(self, response):
+        """
+        Xử lý response từ OCR API
+        """
+        try:
+            if response.get('status') == 'success':
+                data = response.get('data', {})
+                
+                # Extract counts
+                figure_count = data.get('figure_count', 0)
+                table_count = data.get('table_count', 0)
+                total_images = data.get('total_images', figure_count + table_count)
+                
+                # Extract coordinates if available
+                figure_regions = data.get('figure_regions', [])
+                table_regions = data.get('table_regions', [])
+                
+                # Extract text content
+                text_content = data.get('text_content', '')
+                
+                # Confidence scores
+                confidence = data.get('confidence', 0.8)
+                
+                return {
+                    'success': True,
+                    'figure_count': figure_count,
+                    'table_count': table_count,
+                    'total_count': total_images,
+                    'figure_regions': figure_regions,
+                    'table_regions': table_regions,
+                    'text_content': text_content,
+                    'confidence': confidence,
+                    'method': 'google_ocr'
+                }
+            else:
+                return self._get_fallback_result()
+                
+        except Exception:
+            return self._get_fallback_result()
+    
+    def _get_fallback_result(self):
+        """
+        Fallback result khi OCR API không khả dụng
+        """
+        return {
+            'success': False,
+            'figure_count': 2,  # Conservative estimate
+            'table_count': 1,
+            'total_count': 3,
+            'figure_regions': [],
+            'table_regions': [],
+            'text_content': '',
+            'confidence': 0.5,
+            'method': 'fallback'
+        }
+
+class EnhancedContentBasedFigureFilter:
+    """
+    Bộ lọc thông minh với Google OCR Integration
+    """
+    
+    def __init__(self, google_ocr_service=None):
         self.text_filter = BalancedTextFilter()
         self.enable_balanced_filter = True
         self.min_estimated_count = 1
-        self.max_estimated_count = 12  # Tăng từ 8 lên 12
+        self.max_estimated_count = 15  # Tăng từ 12
+        self.google_ocr = google_ocr_service
+        self.enable_ocr_counting = True
         
-    def analyze_content_and_filter(self, image_bytes, candidates):
+    def analyze_content_and_filter_with_ocr(self, image_bytes, candidates):
         """
-        Phân tích với Balanced Text Filter
+        Phân tích với Google OCR + Balanced Text Filter
         """
         if not CV2_AVAILABLE:
             return candidates
         
         try:
-            # Ước tính số lượng
-            img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            img = np.array(img_pil)
-            h, w = img.shape[:2]
+            # OCR Analysis để đếm figures
+            estimated_count = self.min_estimated_count
+            ocr_info = {}
             
-            estimated_count = self._estimate_figure_count_conservative(img)
+            if self.google_ocr and self.enable_ocr_counting:
+                with st.spinner("🔍 Analyzing image content with OCR..."):
+                    ocr_result = self.google_ocr.analyze_image_content(image_bytes)
+                    
+                    if ocr_result['success']:
+                        estimated_count = max(ocr_result['total_count'], self.min_estimated_count)
+                        estimated_count = min(estimated_count, self.max_estimated_count)
+                        ocr_info = ocr_result
+                        
+                        st.success(f"🤖 OCR detected: {ocr_result['figure_count']} figures, {ocr_result['table_count']} tables (confidence: {ocr_result['confidence']:.1f})")
+                    else:
+                        # Fallback to conservative estimation
+                        img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                        img = np.array(img_pil)
+                        estimated_count = self._estimate_figure_count_conservative(img)
+                        st.info(f"📊 Conservative estimate: {estimated_count} figures (OCR fallback)")
+            else:
+                # Original estimation method
+                img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                img = np.array(img_pil)
+                estimated_count = self._estimate_figure_count_conservative(img)
+                st.info(f"📊 Estimated: {estimated_count} figures (traditional method)")
             
             # Balanced Text Filter
             if self.enable_balanced_filter:
                 filtered_candidates = self.text_filter.analyze_and_filter_balanced(image_bytes, candidates)
-                st.success(f"🧠 Balanced Text Filter: {len(filtered_candidates)}/{len(candidates)} figures → confidence filter sẽ được áp dụng (estimated: {estimated_count})")
+                st.success(f"🧠 Balanced Text Filter: {len(filtered_candidates)}/{len(candidates)} figures → target: {estimated_count}")
             else:
                 filtered_candidates = candidates
             
-            # Giới hạn theo estimated count - nhưng cho phép nhiều hơn
-            target_count = min(estimated_count + 2, self.max_estimated_count)  # +2 để đảm bảo
+            # Intelligent filtering based on OCR results
+            if ocr_info.get('success') and ocr_info.get('figure_regions'):
+                # Use OCR regions to improve filtering
+                filtered_candidates = self._filter_with_ocr_regions(filtered_candidates, ocr_info)
+            
+            # Adjust count based on estimation
+            target_count = min(estimated_count + 1, self.max_estimated_count)  # +1 buffer
             if len(filtered_candidates) > target_count:
-                # Sắp xếp theo confidence
-                sorted_candidates = sorted(filtered_candidates, key=lambda x: x.get('final_confidence', 0), reverse=True)
+                # Sort by confidence and take top candidates
+                sorted_candidates = sorted(filtered_candidates, 
+                                         key=lambda x: x.get('final_confidence', 0), reverse=True)
                 filtered_candidates = sorted_candidates[:target_count]
+                st.info(f"🎯 Limited to top {target_count} figures based on OCR estimate")
             
             return filtered_candidates
             
         except Exception as e:
-            st.error(f"❌ Content filter error: {str(e)}")
+            st.error(f"❌ Enhanced filter error: {str(e)}")
             return candidates
+    
+    def _filter_with_ocr_regions(self, candidates, ocr_info):
+        """
+        Sử dụng OCR regions để cải thiện filtering
+        """
+        try:
+            ocr_regions = ocr_info.get('figure_regions', []) + ocr_info.get('table_regions', [])
+            
+            if not ocr_regions:
+                return candidates
+            
+            enhanced_candidates = []
+            
+            for candidate in candidates:
+                bbox = candidate['bbox']
+                candidate_center = (bbox[0] + bbox[2]//2, bbox[1] + bbox[3]//2)
+                
+                # Check if candidate overlaps with OCR regions
+                max_overlap = 0
+                for region in ocr_regions:
+                    if self._calculate_region_overlap(bbox, region):
+                        overlap = self._calculate_overlap_ratio(bbox, region)
+                        max_overlap = max(max_overlap, overlap)
+                
+                # Boost confidence for candidates that match OCR regions
+                if max_overlap > 0.3:  # 30% overlap threshold
+                    candidate['final_confidence'] = candidate.get('final_confidence', 50) + 20
+                    candidate['ocr_boost'] = True
+                    candidate['ocr_overlap'] = max_overlap
+                
+                enhanced_candidates.append(candidate)
+            
+            return enhanced_candidates
+            
+        except Exception:
+            return candidates
+    
+    def _calculate_region_overlap(self, bbox, ocr_region):
+        """
+        Tính overlap giữa bounding box và OCR region
+        """
+        try:
+            x1, y1, w1, h1 = bbox
+            x2, y2, w2, h2 = ocr_region.get('x', 0), ocr_region.get('y', 0), ocr_region.get('width', 0), ocr_region.get('height', 0)
+            
+            # Calculate intersection
+            left = max(x1, x2)
+            top = max(y1, y2)
+            right = min(x1 + w1, x2 + w2)
+            bottom = min(y1 + h1, y2 + h2)
+            
+            if left < right and top < bottom:
+                return True
+            return False
+            
+        except Exception:
+            return False
+    
+    def _calculate_overlap_ratio(self, bbox, ocr_region):
+        """
+        Tính tỷ lệ overlap
+        """
+        try:
+            x1, y1, w1, h1 = bbox
+            x2, y2, w2, h2 = ocr_region.get('x', 0), ocr_region.get('y', 0), ocr_region.get('width', 0), ocr_region.get('height', 0)
+            
+            # Calculate intersection area
+            left = max(x1, x2)
+            top = max(y1, y2)
+            right = min(x1 + w1, x2 + w2)
+            bottom = min(y1 + h1, y2 + h2)
+            
+            if left < right and top < bottom:
+                intersection = (right - left) * (bottom - top)
+                union = w1 * h1 + w2 * h2 - intersection
+                return intersection / union if union > 0 else 0
+            
+            return 0
+            
+        except Exception:
+            return 0
     
     def _estimate_figure_count_conservative(self, img):
         """
-        Ước tính conservative số lượng figures
+        Ước tính conservative số lượng figures (fallback method)
         """
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -622,14 +865,14 @@ class ContentBasedFigureFilter:
             return estimated
             
         except Exception:
-            return 4  # Default fallback
+            return 3  # Safe fallback
 
 class SuperEnhancedImageExtractor:
     """
-    Tách ảnh với Balanced Text Filter
+    Tách ảnh với Balanced Text Filter + Google OCR Integration
     """
     
-    def __init__(self):
+    def __init__(self, google_ocr_service=None):
         # Tham số cơ bản - giảm requirements
         self.min_area_ratio = 0.0005       # Giảm từ 0.001
         self.min_area_abs = 400            # Giảm từ 600
@@ -657,8 +900,8 @@ class SuperEnhancedImageExtractor:
         self.canny_high = 80               # Giảm từ 100
         self.blur_kernel = 3
         
-        # Content-Based Filter với Balanced Text Filter
-        self.content_filter = ContentBasedFigureFilter()
+        # Enhanced Content-Based Filter với Google OCR
+        self.content_filter = EnhancedContentBasedFigureFilter(google_ocr_service)
         self.enable_content_filter = True
         
         # Debug mode
@@ -702,9 +945,9 @@ class SuperEnhancedImageExtractor:
             # Lọc và merge
             filtered_candidates = self._filter_and_merge_candidates(all_candidates, w, h)
             
-            # Content-Based Filter với Balanced Text Filter
+            # Enhanced Content-Based Filter với Google OCR
             if self.enable_content_filter:
-                content_filtered = self.content_filter.analyze_content_and_filter(image_bytes, filtered_candidates)
+                content_filtered = self.content_filter.analyze_content_and_filter_with_ocr(image_bytes, filtered_candidates)
                 filtered_candidates = content_filtered
             
             # Tạo final figures với continuous numbering
@@ -1097,10 +1340,12 @@ class SuperEnhancedImageExtractor:
             center_x, center_y = fig['center_x'], fig['center_y']
             draw.ellipse([center_x-8, center_y-8, center_x+8, center_y+8], fill=color)
             
-            # Simple label with override info
+            # Simple label with override info and OCR boost
             label = f"{fig['name']} ({fig['confidence']:.0f}%)"
             if fig.get('override_reason'):
                 label += f" [{fig['override_reason']}]"
+            if fig.get('ocr_boost'):
+                label += f" 🤖OCR"
             draw.text((x + 5, y + 5), label, fill=color, stroke_width=2, stroke_fill='white')
         
         return img_pil
@@ -2247,10 +2492,15 @@ def display_beautiful_figures(figures, debug_img=None):
                     if fig.get('override_reason'):
                         override_text = f"<br><small>✅ Kept: {fig['override_reason']}</small>"
                     
+                    ocr_text = ""
+                    if fig.get('ocr_boost'):
+                        overlap = fig.get('ocr_overlap', 0)
+                        ocr_text = f"<br><small>🤖 OCR boost: {overlap:.1f}</small>"
+                    
                     st.markdown(f"""
                     <div style="background: #f0f0f0; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
                         <strong>{type_icon} {fig['name']}</strong><br>
-                        {confidence_color} {fig['confidence']:.1f}% | {fig['method']}{override_text}
+                        {confidence_color} {fig['confidence']:.1f}% | {fig['method']}{override_text}{ocr_text}
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -2277,8 +2527,8 @@ def main():
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 📱 ENHANCED PHONE PROCESSING</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Auto table conversion • ✅ Smart phone image processing • ✅ Continuous numbering</p>
+        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 🤖 GOOGLE OCR + 📱 ENHANCED PHONE</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Auto table conversion • ✅ Google OCR figure counting • ✅ Smart phone processing • ✅ Continuous numbering</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -2294,6 +2544,48 @@ def main():
                 st.success("✅ API key hợp lệ")
             else:
                 st.error("❌ API key không hợp lệ")
+        
+        st.markdown("---")
+        
+        # Google OCR Service Settings
+        st.markdown("### 🤖 Google OCR Service")
+        enable_google_ocr = st.checkbox("Bật Google OCR để đếm figures", value=True)
+        
+        if enable_google_ocr:
+            ocr_api_url = st.text_input(
+                "OCR API URL", 
+                value="https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec",
+                help="Google Apps Script URL"
+            )
+            
+            ocr_api_key = st.text_input(
+                "OCR API Key", 
+                type="password",
+                placeholder="sk-...",
+                help="API key cho OCR service"
+            )
+            
+            if ocr_api_key:
+                if len(ocr_api_key) > 10:
+                    st.success("✅ OCR API key đã nhập")
+                else:
+                    st.error("❌ OCR API key quá ngắn")
+            
+            st.markdown("""
+            <div style="background: #e8f5e8; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
+            <small>
+            🤖 <strong>Google OCR Features:</strong><br>
+            • Tự động đếm số lượng figures trong ảnh<br>
+            • Detect vị trí chính xác của illustrations<br>
+            • Phân biệt figures vs tables<br>
+            • Cải thiện accuracy của figure extraction<br>
+            • Fallback to traditional method nếu lỗi
+            </small>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            ocr_api_url = None
+            ocr_api_key = None
         
         st.markdown("---")
         
@@ -2321,6 +2613,7 @@ def main():
                 🎯 <strong>3+ indicators mới loại bỏ</strong><br>
                 🎯 <strong>Confidence filter ≥65% để đảm bảo chất lượng</strong><br>
                 📊 <strong>Auto convert bảng thành Word table</strong><br>
+                🤖 <strong>Google OCR figure counting</strong><br>
                 📱 <strong>Xử lý ảnh điện thoại chuyên nghiệp</strong><br>
                 🔢 <strong>Đánh số figures liên tiếp qua các trang</strong>
                 </small>
@@ -2343,7 +2636,7 @@ def main():
                     whitespace_threshold = st.slider("Whitespace Ratio Threshold", 0.1, 0.8, 0.45, 0.05)
                     
                     st.markdown("**🎯 Confidence Filter:**")
-                    confidence_threshold = st.slider("Final Confidence Threshold (%)", 30, 95, 65, 5)
+                    confidence_threshold = st.slider("Final Confidence Threshold (%)", 50, 95, 65, 5)
                     st.markdown(f"<small>✅ Chỉ giữ figures có confidence ≥ {confidence_threshold}%</small>", unsafe_allow_html=True)
                     
                     st.markdown("**📝 Word Export Options:**")
@@ -2403,7 +2696,14 @@ def main():
            - Hỗ trợ format 1 dòng & multi-line
            - Professional table formatting
         
-        7. **📱 Enhanced Phone Image Processing**
+        7. **🤖 Google OCR Integration**
+           - Tự động đếm số lượng figures trong ảnh
+           - Detect vị trí chính xác của illustrations
+           - Phân biệt figures vs tables
+           - Cải thiện accuracy của extraction
+           - Smart region-based filtering
+        
+        8. **📱 Enhanced Phone Image Processing**
            - Smart document detection & crop
            - Advanced auto-rotate với multiple methods
            - Enhanced perspective correction
@@ -2412,7 +2712,7 @@ def main():
            - Advanced text enhancement
            - Gamma correction tự động
         
-        8. **🔢 Continuous Numbering**
+        9. **🔢 Continuous Numbering**
            - Figures đánh số liên tiếp qua các trang
            - figure-1, figure-2, figure-3... (không reset mỗi trang)
            - table-1, table-2, table-3... (liên tiếp)
@@ -2424,6 +2724,7 @@ def main():
         - **Override reasoning rõ ràng**
         - **🎯 Chỉ giữ figures có confidence ≥65%**
         - **📊 Auto convert bảng thành Word table**
+        - **🤖 OCR-guided figure counting cho accuracy cao**
         - **📱 Xử lý ảnh điện thoại chuẩn professional**
         - **🔢 Figures đánh số liên tiếp: figure-1, figure-2, ...**
         """)
@@ -2439,8 +2740,20 @@ def main():
     # Khởi tạo
     try:
         gemini_api = GeminiAPI(api_key)
+        
+        # Initialize Google OCR Service
+        google_ocr_service = None
+        if enable_google_ocr and ocr_api_url and ocr_api_key:
+            try:
+                google_ocr_service = GoogleOCRService(ocr_api_url, ocr_api_key)
+                st.success("🤖 Google OCR Service initialized")
+            except Exception as e:
+                st.warning(f"⚠️ Could not initialize OCR service: {str(e)}")
+        elif enable_google_ocr:
+            st.warning("⚠️ Google OCR enabled but missing URL/Key")
+        
         if enable_extraction and CV2_AVAILABLE:
-            image_extractor = SuperEnhancedImageExtractor()
+            image_extractor = SuperEnhancedImageExtractor(google_ocr_service)
             
             # Apply Balanced Filter settings
             if 'text_threshold' in locals():
@@ -2461,6 +2774,12 @@ def main():
                 image_extractor.content_filter.text_filter.whitespace_ratio_threshold = whitespace_threshold
             if 'confidence_threshold' in locals():
                 image_extractor.final_confidence_threshold = confidence_threshold
+            
+            # Enable/disable OCR counting
+            if google_ocr_service:
+                image_extractor.content_filter.enable_ocr_counting = True
+            else:
+                image_extractor.content_filter.enable_ocr_counting = False
             
             # Debug mode
             if debug_mode:
@@ -2633,6 +2952,11 @@ Ví dụ: Tên | Tuổi | Điểm
                             with col_4:
                                 overrides = sum(1 for f in all_extracted_figures if f.get('override_reason'))
                                 st.metric("🧠 Overrides", overrides)
+                            
+                            # OCR boost statistics
+                            ocr_boosts = sum(1 for f in all_extracted_figures if f.get('ocr_boost'))
+                            if ocr_boosts > 0:
+                                st.markdown(f"**🤖 OCR Enhanced: {ocr_boosts} figures**")
                             
                             # Override statistics
                             if overrides > 0:
@@ -3167,14 +3491,15 @@ Ví dụ: Tên | Tuổi | Điểm
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 📱 ENHANCED PHONE PROCESSING</h3>
+        <h3>⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 🤖 GOOGLE OCR + 📱 ENHANCED PHONE</h3>
         <p><strong>✅ 7 phương pháp phân tích cân bằng</strong></p>
         <p><strong>⚖️ Lọc text mà vẫn giữ figures</strong></p>
         <p><strong>🧠 Override logic thông minh</strong></p>
         <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
         <p><strong>📊 Tự động chuyển bảng thành Word table</strong></p>
+        <p><strong>🤖 Google OCR intelligent figure counting</strong></p>
         <p><strong>📱 Smart document detection + noise reduction + advanced perspective correction</strong></p>
-        <p><strong>📄 PDF + 🖼️ Ảnh đơn + 📱 Professional phone processing + 🎯 Confidence ≥65% + 📊 Auto table + 🔢 Continuous numbering</strong></p>
+        <p><strong>📄 PDF + 🖼️ Ảnh đơn + 📱 Professional phone processing + 🤖 OCR counting + 🎯 Confidence ≥65% + 📊 Auto table + 🔢 Continuous numbering</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
