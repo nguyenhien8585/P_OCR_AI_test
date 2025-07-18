@@ -1352,7 +1352,7 @@ def clean_session_state():
 
 def main():
     try:
-        st.markdown('<h1 class="main-header">📝 PDF/LaTeX Converter - Balanced Text Filter</h1>', unsafe_allow_html=True)
+        st.markdown('<h1 class="main-header">📝 PDF/LaTeX Converter - Fixed Version</h1>', unsafe_allow_html=True)
         
         # Hero section
         st.markdown("""
@@ -1613,12 +1613,9 @@ D) [đáp án D hoàn chỉnh]
                         st.write(f"• Kích thước: {image_pil.size[0]} x {image_pil.size[1]}")
                         st.write(f"• Mode: {image_pil.mode}")
                         
-                    for image in images:
-                        try:
-                            process_image(image)
-                        except Exception as e:
-                            st.error(f"❌ Lỗi đọc ảnh: {str(e)}")
-                            continue  # OK vì nằm trong vòng for
+                    except Exception as e:
+                        st.error(f"❌ Lỗi đọc ảnh: {str(e)}")
+                        st.stop()
                     
                     # Extract figures option
                     extract_figures_single = st.checkbox("🎯 Tách figures từ ảnh", value=True)
@@ -1633,7 +1630,7 @@ D) [đáp án D hoàn chỉnh]
                             # Check image size
                             if len(img_bytes) > 20 * 1024 * 1024:  # 20MB
                                 st.error("❌ Ảnh quá lớn (>20MB). Vui lòng resize.")
-                                continue
+                                st.stop()
                             
                             # Tách figures
                             extracted_figures = []
