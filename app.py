@@ -1480,7 +1480,7 @@ class EnhancedWordExporter:
     @staticmethod
     def _detect_and_parse_tables(latex_content):
         """
-        Detect và parse tables trong LaTeX content
+        Detect và parse tables trong LaTeX content - cải thiện cho markdown tables
         """
         tables = []
         lines = latex_content.split('\n')
@@ -1489,7 +1489,7 @@ class EnhancedWordExporter:
         while i < len(lines):
             line = lines[i].strip()
             
-            # Phát hiện table patterns
+            # Phát hiện table patterns - bao gồm markdown tables
             if EnhancedWordExporter._is_potential_table_header(line):
                 table_data = EnhancedWordExporter._parse_table_starting_at(lines, i)
                 if table_data:
@@ -1509,7 +1509,7 @@ class EnhancedWordExporter:
     @staticmethod
     def _is_potential_table_header(line):
         """
-        Kiểm tra xem line có phải table header không - hỗ trợ format 1 dòng
+        Kiểm tra xem line có phải table header không - hỗ trợ markdown và LaTeX format
         """
         # Patterns cho table header
         patterns = [
@@ -1518,6 +1518,8 @@ class EnhancedWordExporter:
             r'Thời gian.*\|.*Số.*',  # Specific patterns
             r'.*\[.*\).*\|.*',  # Interval notation with |
             r'.*\|.*\d+.*\|.*\d+.*',  # Pattern có số
+            r'^[\s\|]*[-:]+[\s\|]*[-:]+[\s\|]*',  # Markdown table separator (|---|---|)
+            r'^\|.*\|.*\|',  # Markdown table format (|col1|col2|col3|)
         ]
         
         for pattern in patterns:
@@ -1531,7 +1533,7 @@ class EnhancedWordExporter:
     @staticmethod
     def _parse_table_starting_at(lines, start_idx):
         """
-        Parse table bắt đầu từ start_idx - hỗ trợ table 1 dòng
+        Parse table bắt đầu từ start_idx - hỗ trợ markdown và LaTeX tables
         """
         if start_idx >= len(lines):
             return None
@@ -1542,37 +1544,42 @@ class EnhancedWordExporter:
         if EnhancedWordExporter._is_single_line_table(line):
             return EnhancedWordExporter._parse_single_line_table(line)
         
-        # Logic cũ cho multi-line table
+        # Parse markdown/LaTeX table
         table_lines = []
         current_idx = start_idx
         
-        # Lấy header
-        if current_idx < len(lines):
-            header_line = lines[current_idx].strip()
-            if header_line:
-                table_lines.append(header_line)
-                current_idx += 1
-        
-        # Lấy data rows
+        # Lấy tất cả lines của table
         while current_idx < len(lines):
             line = lines[current_idx].strip()
             
             if not line:
+                # Empty line - kiểm tra xem có phải end of table không
+                if table_lines:  # Đã có data
+                    break
                 current_idx += 1
                 continue
             
             # Kiểm tra xem có phải table row không
-            if EnhancedWordExporter._is_table_row(line):
+            if EnhancedWordExporter._is_table_row(line) or EnhancedWordExporter._is_markdown_separator(line):
                 table_lines.append(line)
                 current_idx += 1
             else:
                 break
         
         # Parse thành table data
-        if len(table_lines) >= 2:  # Ít nhất header + 1 row
+        if len(table_lines) >= 2:  # Ít nhất header + 1 row (hoặc header + separator + data)
             return EnhancedWordExporter._parse_table_data(table_lines)
         
         return None
+    
+    @staticmethod
+    def _is_markdown_separator(line):
+        """
+        Kiểm tra xem có phải markdown table separator không (|---|---|)
+        """
+        # Pattern: |---|---|--- hoặc | :---: | :---: | (với optional alignment)
+        pattern = r'^\|?[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)+\|?$'
+        return re.match(pattern, line.strip()) is not None
     
     @staticmethod
     def _is_single_line_table(line):
@@ -1619,7 +1626,28 @@ class EnhancedWordExporter:
                 next_part = parts[i+1] if i+1 < len(parts) else ""
                 
                 # Nếu current không phải số/bracket nhưng đằng sau có số
-                if (not re.match(r'^[\[\]\d\s;,().-]+
+                if (not re.match(r'^[\[\]\d\s;,().-]+$', current) and 
+                    re.search(r'\d', next_part) and 
+                    re.match(r'^[A-Za-zÀ-ỹ\s()]+', current)):
+                    break_idx = i
+                    break
+            
+            if not break_idx or break_idx >= len(parts) - 1:
+                return None
+            
+            # Tạo 2 rows
+            header_row = parts[:break_idx]
+            data_row = parts[break_idx:]
+            
+            # Đảm bảo same length
+            min_len = min(len(header_row), len(data_row))
+            if min_len < 2:
+                return None
+            
+            return [header_row[:min_len], data_row[:min_len]]
+            
+        except Exception:
+            return None
     
     @staticmethod
     def _is_table_row(line):
@@ -1643,15 +1671,22 @@ class EnhancedWordExporter:
     @staticmethod
     def _parse_table_data(table_lines):
         """
-        Parse table lines thành structured data
+        Parse table lines thành structured data - hỗ trợ markdown tables
         """
         table_data = []
         
         for line in table_lines:
+            # Skip markdown separator lines (|---|---|)
+            if EnhancedWordExporter._is_markdown_separator(line):
+                continue
+                
             # Split bằng |
             cells = [cell.strip() for cell in line.split('|')]
-            # Loại bỏ empty cells ở đầu/cuối
-            cells = [cell for cell in cells if cell]
+            # Loại bỏ empty cells ở đầu/cuối (thường do | ở đầu/cuối line)
+            if cells and not cells[0]:  # First cell empty
+                cells = cells[1:]
+            if cells and not cells[-1]:  # Last cell empty
+                cells = cells[:-1]
             
             if cells:
                 table_data.append(cells)
@@ -2854,8 +2889,6 @@ Ví dụ: Tên | Tuổi | Điểm
                                         st.error(f"❌ Lỗi tạo Word: {str(e)}")
                         else:
                             st.error("❌ Cần cài đặt python-docx")
-    
-
     
     # Footer
     st.markdown("---")
