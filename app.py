@@ -1107,14 +1107,15 @@ class SuperEnhancedImageExtractor:
 
 class PhoneImageProcessor:
     """
-    Xử lý ảnh chụp từ điện thoại để tối ưu cho OCR
+    Xử lý ảnh chụp từ điện thoại để tối ưu cho OCR - Enhanced Version
     """
     
     @staticmethod
     def process_phone_image(image_bytes, auto_enhance=True, auto_rotate=True, 
-                          perspective_correct=True, text_enhance=True):
+                          perspective_correct=True, text_enhance=True, 
+                          crop_document=True, noise_reduction=True):
         """
-        Xử lý ảnh điện thoại với các tùy chọn
+        Xử lý ảnh điện thoại với các tùy chọn nâng cao
         """
         try:
             # Đọc ảnh
@@ -1123,22 +1124,31 @@ class PhoneImageProcessor:
             # Convert to numpy for CV2 processing if available
             if CV2_AVAILABLE:
                 img = np.array(img_pil)
+                original_img = img.copy()
                 
-                # Auto rotate & straighten
+                # Step 1: Noise reduction (if enabled)
+                if noise_reduction:
+                    img = PhoneImageProcessor._reduce_noise(img)
+                
+                # Step 2: Document detection and cropping
+                if crop_document:
+                    img = PhoneImageProcessor._smart_document_crop(img)
+                
+                # Step 3: Auto rotate & straighten
                 if auto_rotate:
-                    img = PhoneImageProcessor._auto_rotate(img)
+                    img = PhoneImageProcessor._enhanced_auto_rotate(img)
                 
-                # Perspective correction
+                # Step 4: Perspective correction
                 if perspective_correct:
-                    img = PhoneImageProcessor._perspective_correction(img)
+                    img = PhoneImageProcessor._enhanced_perspective_correction(img)
                 
-                # Auto enhance
+                # Step 5: Auto enhance
                 if auto_enhance:
-                    img = PhoneImageProcessor._auto_enhance(img)
+                    img = PhoneImageProcessor._enhanced_auto_enhance(img)
                 
-                # Text enhancement
+                # Step 6: Text enhancement
                 if text_enhance:
-                    img = PhoneImageProcessor._enhance_text(img)
+                    img = PhoneImageProcessor._enhanced_text_enhancement(img)
                 
                 # Convert back to PIL
                 processed_img = Image.fromarray(img)
@@ -1150,9 +1160,12 @@ class PhoneImageProcessor:
                     # Basic enhancement with PIL
                     from PIL import ImageEnhance
                     enhancer = ImageEnhance.Contrast(processed_img)
-                    processed_img = enhancer.enhance(1.2)
+                    processed_img = enhancer.enhance(1.3)
                     
                     enhancer = ImageEnhance.Sharpness(processed_img)
+                    processed_img = enhancer.enhance(1.2)
+                    
+                    enhancer = ImageEnhance.Brightness(processed_img)
                     processed_img = enhancer.enhance(1.1)
             
             return processed_img
@@ -1162,35 +1175,68 @@ class PhoneImageProcessor:
             return Image.open(io.BytesIO(image_bytes)).convert("RGB")
     
     @staticmethod
-    def _auto_rotate(img):
+    def _reduce_noise(img):
         """
-        Tự động xoay ảnh để text thẳng
+        Giảm noise trong ảnh
+        """
+        try:
+            # Bilateral filter để giảm noise mà vẫn giữ edges
+            denoised = cv2.bilateralFilter(img, 9, 75, 75)
+            return denoised
+        except Exception:
+            return img
+    
+    @staticmethod
+    def _smart_document_crop(img):
+        """
+        Tự động crop document thông minh
         """
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            h, w = gray.shape
             
-            # Detect text orientation
-            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-            lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=100)
+            # Enhanced edge detection
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            edges = cv2.Canny(blurred, 30, 80, apertureSize=3)
             
-            if lines is not None:
-                angles = []
-                for rho, theta in lines[:10]:  # Take first 10 lines
-                    angle = theta * 180 / np.pi
-                    if angle > 90:
-                        angle = angle - 180
-                    angles.append(angle)
+            # Morphological operations để connect broken lines
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+            
+            # Find contours
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+            
+            # Look for document-like contours
+            for contour in contours[:10]:
+                # Approximate contour
+                epsilon = 0.02 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
                 
-                if angles:
-                    # Get most common angle
-                    median_angle = np.median(angles)
+                # Check if it's roughly rectangular (4-8 points)
+                if 4 <= len(approx) <= 8:
+                    area = cv2.contourArea(contour)
+                    img_area = h * w
+                    area_ratio = area / img_area
                     
-                    # Rotate if angle is significant
-                    if abs(median_angle) > 1:
-                        center = (img.shape[1]//2, img.shape[0]//2)
-                        M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
-                        img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), 
-                                           flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+                    # Must be substantial portion of image
+                    if 0.1 <= area_ratio <= 0.95:
+                        # Get bounding rectangle
+                        x, y, w_rect, h_rect = cv2.boundingRect(contour)
+                        
+                        # Add some padding
+                        padding = 20
+                        x = max(0, x - padding)
+                        y = max(0, y - padding)
+                        w_rect = min(w - x, w_rect + 2*padding)
+                        h_rect = min(h - y, h_rect + 2*padding)
+                        
+                        # Crop the image
+                        cropped = img[y:y+h_rect, x:x+w_rect]
+                        
+                        # Validate crop
+                        if cropped.shape[0] > 100 and cropped.shape[1] > 100:
+                            return cropped
             
             return img
             
@@ -1198,38 +1244,163 @@ class PhoneImageProcessor:
             return img
     
     @staticmethod
-    def _perspective_correction(img):
+    def _enhanced_auto_rotate(img):
         """
-        Sửa perspective distortion
+        Tự động xoay ảnh thông minh hơn
         """
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
             
-            # Find document edges
-            edges = cv2.Canny(gray, 75, 200)
+            # Method 1: Hough lines
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=80)
+            
+            angles = []
+            if lines is not None:
+                for rho, theta in lines[:20]:  # More lines for better accuracy
+                    angle = theta * 180 / np.pi
+                    # Normalize angle to [-45, 45]
+                    if angle > 90:
+                        angle = angle - 180
+                    elif angle > 45:
+                        angle = angle - 90
+                    elif angle < -45:
+                        angle = angle + 90
+                    
+                    if abs(angle) < 45:  # Filter extreme angles
+                        angles.append(angle)
+            
+            # Method 2: Text line detection
+            # Find horizontal text patterns
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (gray.shape[1]//30, 1))
+            horizontal = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel)
+            
+            # Find contours of text lines
+            contours, _ = cv2.findContours(horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                if cv2.contourArea(contour) > 500:  # Large enough text lines
+                    rect = cv2.minAreaRect(contour)
+                    angle = rect[2]
+                    if angle < -45:
+                        angle += 90
+                    elif angle > 45:
+                        angle -= 90
+                    
+                    if abs(angle) < 30:  # Reasonable text angle
+                        angles.append(angle)
+            
+            if angles:
+                # Use median for robustness
+                rotation_angle = np.median(angles)
+                
+                # Only rotate if angle is significant
+                if abs(rotation_angle) > 0.5:
+                    center = (img.shape[1]//2, img.shape[0]//2)
+                    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+                    
+                    # Calculate new image size to avoid cropping
+                    cos = np.abs(M[0, 0])
+                    sin = np.abs(M[0, 1])
+                    new_w = int((img.shape[0] * sin) + (img.shape[1] * cos))
+                    new_h = int((img.shape[0] * cos) + (img.shape[1] * sin))
+                    
+                    # Adjust transformation matrix
+                    M[0, 2] += (new_w / 2) - center[0]
+                    M[1, 2] += (new_h / 2) - center[1]
+                    
+                    img = cv2.warpAffine(img, M, (new_w, new_h), 
+                                       flags=cv2.INTER_CUBIC, 
+                                       borderMode=cv2.BORDER_CONSTANT,
+                                       borderValue=(255, 255, 255))
+            
+            return img
+            
+        except Exception:
+            return img
+    
+    @staticmethod
+    def _enhanced_perspective_correction(img):
+        """
+        Sửa perspective distortion nâng cao
+        """
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            h, w = gray.shape
+            
+            # Multiple methods for document detection
+            
+            # Method 1: Adaptive thresholding + morphology
+            adaptive_thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                                  cv2.THRESH_BINARY, 11, 2)
+            
+            # Method 2: Enhanced edge detection
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            edges = cv2.Canny(blurred, 50, 150, apertureSize=3)
+            
+            # Combine both methods
+            combined = cv2.bitwise_or(edges, cv2.bitwise_not(adaptive_thresh))
+            
+            # Morphological operations
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+            combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
             
             # Find contours
-            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             contours = sorted(contours, key=cv2.contourArea, reverse=True)
             
-            # Find largest rectangular contour
+            # Look for document contour
             for contour in contours[:5]:
                 peri = cv2.arcLength(contour, True)
-                approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+                approx = cv2.approxPolyDP(contour, 0.015 * peri, True)  # More flexible approximation
                 
-                if len(approx) == 4:
-                    # Check if it's a reasonable document shape
-                    area = cv2.contourArea(approx)
-                    img_area = img.shape[0] * img.shape[1]
-                    
-                    if area > img_area * 0.1:  # At least 10% of image
-                        # Order points
-                        pts = approx.reshape(4, 2)
-                        rect = PhoneImageProcessor._order_points(pts)
+                area = cv2.contourArea(contour)
+                img_area = h * w
+                area_ratio = area / img_area
+                
+                # Check for document-like properties
+                if (len(approx) >= 4 and area_ratio > 0.2):
+                    # If more than 4 points, find the best 4 corners
+                    if len(approx) > 4:
+                        # Use convex hull and find extreme points
+                        hull = cv2.convexHull(contour)
                         
-                        # Calculate destination dimensions
+                        # Find the 4 extreme points
+                        pts = hull.reshape(-1, 2)
+                        
+                        # Find corners
+                        def distance(p1, p2):
+                            return np.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
+                        
+                        # Find 4 corners by finding points that are farthest from each other
+                        corners = []
+                        
+                        # Top-left: minimum sum
+                        tl = pts[np.argmin(pts.sum(axis=1))]
+                        corners.append(tl)
+                        
+                        # Bottom-right: maximum sum  
+                        br = pts[np.argmax(pts.sum(axis=1))]
+                        corners.append(br)
+                        
+                        # Top-right: minimum diff (x-y)
+                        tr = pts[np.argmin(np.diff(pts, axis=1).flatten())]
+                        corners.append(tr)
+                        
+                        # Bottom-left: maximum diff (x-y)
+                        bl = pts[np.argmax(np.diff(pts, axis=1).flatten())]
+                        corners.append(bl)
+                        
+                        approx = np.array(corners)
+                    
+                    if len(approx) == 4:
+                        # Order points properly
+                        rect = PhoneImageProcessor._order_points_enhanced(approx.reshape(-1, 2))
+                        
+                        # Calculate perspective transform
                         (tl, tr, br, bl) = rect
                         
+                        # Calculate the width and height of the new image
                         widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
                         widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
                         maxWidth = max(int(widthA), int(widthB))
@@ -1238,17 +1409,20 @@ class PhoneImageProcessor:
                         heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
                         maxHeight = max(int(heightA), int(heightB))
                         
-                        # Destination points
-                        dst = np.array([
-                            [0, 0],
-                            [maxWidth - 1, 0],
-                            [maxWidth - 1, maxHeight - 1],
-                            [0, maxHeight - 1]], dtype="float32")
-                        
-                        # Perspective transform
-                        M = cv2.getPerspectiveTransform(rect, dst)
-                        img = cv2.warpPerspective(img, M, (maxWidth, maxHeight))
-                        break
+                        # Ensure reasonable dimensions
+                        if maxWidth > 100 and maxHeight > 100:
+                            # Destination points
+                            dst = np.array([
+                                [0, 0],
+                                [maxWidth - 1, 0],
+                                [maxWidth - 1, maxHeight - 1],
+                                [0, maxHeight - 1]], dtype="float32")
+                            
+                            # Apply perspective transformation
+                            M = cv2.getPerspectiveTransform(rect, dst)
+                            warped = cv2.warpPerspective(img, M, (maxWidth, maxHeight))
+                            
+                            return warped
             
             return img
             
@@ -1256,16 +1430,21 @@ class PhoneImageProcessor:
             return img
     
     @staticmethod
-    def _order_points(pts):
+    def _order_points_enhanced(pts):
         """
-        Order points: top-left, top-right, bottom-right, bottom-left
+        Enhanced point ordering
         """
+        # Sort points based on their x+y values (top-left has smallest sum)
         rect = np.zeros((4, 2), dtype="float32")
         
+        # Top-left point has the smallest sum
+        # Bottom-right point has the largest sum
         s = pts.sum(axis=1)
         rect[0] = pts[np.argmin(s)]
         rect[2] = pts[np.argmax(s)]
         
+        # Top-right point has the smallest difference
+        # Bottom-left point has the largest difference
         diff = np.diff(pts, axis=1)
         rect[1] = pts[np.argmin(diff)]
         rect[3] = pts[np.argmax(diff)]
@@ -1273,22 +1452,29 @@ class PhoneImageProcessor:
         return rect
     
     @staticmethod
-    def _auto_enhance(img):
+    def _enhanced_auto_enhance(img):
         """
-        Tự động tăng cường chất lượng ảnh
+        Tự động tăng cường chất lượng ảnh nâng cao
         """
         try:
-            # Convert to LAB color space
+            # Method 1: CLAHE on LAB color space
             lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
             l, a, b = cv2.split(lab)
             
-            # Apply CLAHE to L channel
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            # Apply CLAHE to L channel with optimized parameters
+            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
             l = clahe.apply(l)
             
-            # Merge channels
+            # Merge back
             enhanced = cv2.merge([l, a, b])
             enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2RGB)
+            
+            # Method 2: Gamma correction for brightness
+            gamma = PhoneImageProcessor._calculate_optimal_gamma(enhanced)
+            enhanced = PhoneImageProcessor._apply_gamma_correction(enhanced, gamma)
+            
+            # Method 3: Contrast enhancement
+            enhanced = PhoneImageProcessor._enhance_contrast_adaptive(enhanced)
             
             return enhanced
             
@@ -1296,21 +1482,96 @@ class PhoneImageProcessor:
             return img
     
     @staticmethod
-    def _enhance_text(img):
+    def _calculate_optimal_gamma(img):
         """
-        Tăng cường độ nét cho text
+        Tính gamma tối ưu dựa trên histogram
         """
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            mean_brightness = np.mean(gray)
             
-            # Gaussian blur
-            blurred = cv2.GaussianBlur(gray, (0, 0), 3)
+            # Gamma correction based on image brightness
+            if mean_brightness < 100:  # Dark image
+                return 0.7
+            elif mean_brightness > 180:  # Bright image
+                return 1.3
+            else:  # Normal image
+                return 1.0
+        except:
+            return 1.0
+    
+    @staticmethod
+    def _apply_gamma_correction(img, gamma):
+        """
+        Áp dụng gamma correction
+        """
+        try:
+            # Build lookup table
+            inv_gamma = 1.0 / gamma
+            table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
             
-            # Unsharp mask
-            unsharp_mask = cv2.addWeighted(gray, 1.5, blurred, -0.5, 0)
+            # Apply gamma correction
+            return cv2.LUT(img, table)
+        except:
+            return img
+    
+    @staticmethod
+    def _enhance_contrast_adaptive(img):
+        """
+        Tăng cường contrast adaptive
+        """
+        try:
+            # Convert to YUV color space
+            yuv = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
+            
+            # Apply histogram equalization to Y channel
+            yuv[:,:,0] = cv2.equalizeHist(yuv[:,:,0])
             
             # Convert back to RGB
-            enhanced = cv2.cvtColor(unsharp_mask, cv2.COLOR_GRAY2RGB)
+            enhanced = cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB)
+            
+            return enhanced
+        except:
+            return img
+    
+    @staticmethod
+    def _enhanced_text_enhancement(img):
+        """
+        Tăng cường text nâng cao
+        """
+        try:
+            # Convert to grayscale for processing
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img.copy()
+            
+            # Method 1: Advanced unsharp masking
+            gaussian_3 = cv2.GaussianBlur(gray, (0, 0), 2.0)
+            unsharp_mask = cv2.addWeighted(gray, 2.0, gaussian_3, -1.0, 0)
+            
+            # Method 2: High-pass filter
+            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            sharpened = cv2.filter2D(unsharp_mask, -1, kernel)
+            
+            # Method 3: Morphological operations for text cleanup
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
+            cleaned = cv2.morphologyEx(sharpened, cv2.MORPH_CLOSE, kernel)
+            
+            # Method 4: Adaptive thresholding for binarization (optional)
+            # This can help with very poor quality text
+            mean_intensity = np.mean(cleaned)
+            if mean_intensity < 150:  # Only for darker images
+                adaptive = cv2.adaptiveThreshold(cleaned, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                               cv2.THRESH_BINARY, 11, 2)
+                # Blend with original
+                cleaned = cv2.addWeighted(cleaned, 0.7, adaptive, 0.3, 0)
+            
+            # Convert back to RGB if needed
+            if len(img.shape) == 3:
+                enhanced = cv2.cvtColor(cleaned, cv2.COLOR_GRAY2RGB)
+            else:
+                enhanced = cleaned
             
             return enhanced
             
@@ -2016,8 +2277,8 @@ def main():
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 📱 PHONE IMAGE</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Auto table conversion • ✅ Phone image processing • ✅ Continuous numbering</p>
+        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 📱 ENHANCED PHONE PROCESSING</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Auto table conversion • ✅ Smart phone image processing • ✅ Continuous numbering</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -2142,11 +2403,14 @@ def main():
            - Hỗ trợ format 1 dòng & multi-line
            - Professional table formatting
         
-        7. **📱 Phone Image Processing**
-           - Auto-rotate & straighten
-           - Perspective correction
-           - Enhance image quality
-           - Text clarity optimization
+        7. **📱 Enhanced Phone Image Processing**
+           - Smart document detection & crop
+           - Advanced auto-rotate với multiple methods
+           - Enhanced perspective correction
+           - Noise reduction với bilateral filter
+           - Adaptive contrast enhancement
+           - Advanced text enhancement
+           - Gamma correction tự động
         
         8. **🔢 Continuous Numbering**
            - Figures đánh số liên tiếp qua các trang
@@ -2160,7 +2424,7 @@ def main():
         - **Override reasoning rõ ràng**
         - **🎯 Chỉ giữ figures có confidence ≥65%**
         - **📊 Auto convert bảng thành Word table**
-        - **📱 Xử lý ảnh điện thoại tối ưu**
+        - **📱 Xử lý ảnh điện thoại chuẩn professional**
         - **🔢 Figures đánh số liên tiếp: figure-1, figure-2, ...**
         """)
     
@@ -2460,11 +2724,13 @@ Ví dụ: Tên | Tuổi | Điểm
         st.markdown("""
         <div style="background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c8 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
             <h4>📱 Tối ưu cho ảnh chụp điện thoại:</h4>
-            <p>• 🔄 Auto-rotate và căn chỉnh</p>
-            <p>• ✨ Enhance chất lượng ảnh</p>
-            <p>• 📐 Perspective correction</p>
-            <p>• 🔍 Tăng độ nét văn bản</p>
-            <p>• ⚖️ Balanced Text Filter</p>
+            <p>• 🔄 Auto-rotate và căn chỉnh thông minh</p>
+            <p>• ✨ Enhance chất lượng ảnh với CLAHE + Gamma</p>
+            <p>• 📐 Enhanced perspective correction</p>
+            <p>• 🔍 Advanced text enhancement với unsharp mask</p>
+            <p>• 📄 Smart document detection và crop</p>
+            <p>• 🧹 Noise reduction với bilateral filter</p>
+            <p>• ⚖️ Balanced Text Filter integration</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2494,10 +2760,15 @@ Ví dụ: Tên | Tuổi | Điểm
                 perspective_correct = st.checkbox("📐 Perspective correction", value=True, key="phone_perspective")
                 text_enhance = st.checkbox("🔍 Enhance text clarity", value=True, key="phone_text")
                 
+                # Thêm các options mới
+                st.markdown("**🔧 Advanced Options:**")
+                crop_document = st.checkbox("📄 Smart document crop", value=True, key="phone_crop")
+                noise_reduction = st.checkbox("🧹 Noise reduction", value=True, key="phone_noise")
+                
                 if enable_extraction and CV2_AVAILABLE:
                     extract_phone_figures = st.checkbox("🎯 Tách figures", value=True, key="phone_extract")
                     if extract_phone_figures:
-                        phone_confidence = st.slider("Confidence (%)", 30, 95, 65, 5, key="phone_conf")
+                        phone_confidence = st.slider("Confidence (%)", 50, 95, 65, 5, key="phone_conf")
                 else:
                     extract_phone_figures = False
             
@@ -2515,7 +2786,9 @@ Ví dụ: Tên | Tuổi | Điểm
                                 auto_enhance=auto_enhance,
                                 auto_rotate=auto_rotate,
                                 perspective_correct=perspective_correct,
-                                text_enhance=text_enhance
+                                text_enhance=text_enhance,
+                                crop_document=crop_document,
+                                noise_reduction=noise_reduction
                             )
                             
                             st.success("✅ Xử lý ảnh thành công!")
@@ -2894,13 +3167,14 @@ Ví dụ: Tên | Tuổi | Điểm
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE CONVERSION</h3>
+        <h3>⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 📱 ENHANCED PHONE PROCESSING</h3>
         <p><strong>✅ 7 phương pháp phân tích cân bằng</strong></p>
         <p><strong>⚖️ Lọc text mà vẫn giữ figures</strong></p>
         <p><strong>🧠 Override logic thông minh</strong></p>
         <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
         <p><strong>📊 Tự động chuyển bảng thành Word table</strong></p>
-        <p><strong>📄 PDF + 🖼️ Ảnh đơn + 📱 Ảnh điện thoại + 🎯 Lọc ≥65% + 📊 Auto table + 🔢 Đánh số liên tiếp</strong></p>
+        <p><strong>📱 Smart document detection + noise reduction + advanced perspective correction</strong></p>
+        <p><strong>📄 PDF + 🖼️ Ảnh đơn + 📱 Professional phone processing + 🎯 Confidence ≥65% + 📊 Auto table + 🔢 Continuous numbering</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
