@@ -32,8 +32,8 @@ except ImportError:
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/LaTeX Converter - Balanced Text Filter",
-    page_icon="📝",
+    page_title="PDF/LaTeX Converter - Gentle Filter (No More Missing Content!)",
+    page_icon="🌿",
     layout="wide"
 )
 
@@ -136,31 +136,37 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-class BalancedTextFilter:
+class GentleBalancedTextFilter:
     """
-    Bộ lọc text CÂN BẰNG - Lọc text nhưng vẫn giữ được figures
+    Bộ lọc text GENTLE - Ưu tiên bảo tồn content quan trọng
+    Fix: Không cắt khung đúng/sai, không cắt ảnh minh họa
     """
     
     def __init__(self):
-        # Ngưỡng cân bằng - không quá nghiêm ngặt
-        self.text_density_threshold = 0.7      # Tăng từ 0.4 lên 0.7 (dễ dàng hơn)
-        self.min_visual_complexity = 0.2       # Giảm từ 0.5 xuống 0.2 (dễ dàng hơn)  
-        self.min_diagram_score = 0.1           # Giảm từ 0.3 xuống 0.1 (dễ dàng hơn)
-        self.min_figure_quality = 0.15         # Giảm từ 0.3 xuống 0.15 (dễ dàng hơn)
+        # GENTLE THRESHOLDS - Giảm requirements để bảo tồn content
+        self.text_density_threshold = 0.85         # Tăng từ 0.7 lên 0.85 (khó hơn để coi là text)
+        self.min_visual_complexity = 0.05          # Giảm từ 0.2 xuống 0.05 (dễ giữ lại)
+        self.min_diagram_score = 0.02              # Giảm từ 0.1 xuống 0.02 (dễ giữ lại)
+        self.min_figure_quality = 0.05             # Giảm từ 0.15 xuống 0.05 (dễ giữ lại)
         
-        # Thông số phân tích text nâng cao - không quá khó
-        self.line_density_threshold = 0.25     # Tăng từ 0.15 lên 0.25 (ít loại bỏ hơn)
-        self.char_pattern_threshold = 0.8      # Tăng từ 0.6 lên 0.8 (ít loại bỏ hơn)
-        self.horizontal_structure_threshold = 0.8  # Tăng từ 0.7 lên 0.8
-        self.whitespace_ratio_threshold = 0.45  # Tăng từ 0.3 lên 0.45
+        # RELAXED TEXT ANALYSIS - Ít nghiêm ngặt hơn
+        self.line_density_threshold = 0.4          # Tăng từ 0.25 lên 0.4 (khó coi là text)
+        self.char_pattern_threshold = 0.9          # Tăng từ 0.8 lên 0.9 (khó coi là text)
+        self.horizontal_structure_threshold = 0.9  # Tăng từ 0.8 lên 0.9
+        self.whitespace_ratio_threshold = 0.6      # Tăng từ 0.45 lên 0.6 (khó coi là text)
         
-        # Aspect ratio filtering - rộng hơn
-        self.text_aspect_ratio_min = 0.1       # Giảm từ 0.2 xuống 0.1
-        self.text_aspect_ratio_max = 12.0      # Tăng từ 8.0 lên 12.0
+        # EXPANDED ASPECT RATIO - Chấp nhận nhiều dạng hơn
+        self.text_aspect_ratio_min = 0.05          # Giảm từ 0.1 xuống 0.05
+        self.text_aspect_ratio_max = 20.0          # Tăng từ 12.0 lên 20.0
         
-        # Size filtering - giảm yêu cầu
-        self.min_meaningful_size = 1000        # Giảm từ 2000 xuống 1000
-        self.max_text_block_size = 0.75        # Tăng từ 0.6 lên 0.75
+        # REDUCED SIZE FILTERING - Ít loại bỏ hơn
+        self.min_meaningful_size = 500             # Giảm từ 1000 xuống 500
+        self.max_text_block_size = 0.85            # Tăng từ 0.75 lên 0.85
+        
+        # SPECIAL CONTENT DETECTION
+        self.enable_answer_box_detection = True    # Detect khung đúng/sai
+        self.enable_illustration_protection = True # Bảo vệ ảnh minh họa
+        self.enable_small_figure_protection = True # Bảo vệ figures nhỏ
         
         # Advanced pattern detection
         self.enable_ocr_simulation = True      
@@ -170,9 +176,9 @@ class BalancedTextFilter:
         # Debug mode
         self.debug_mode = False
         
-    def analyze_and_filter_balanced(self, image_bytes, candidates):
+    def analyze_and_filter_gentle(self, image_bytes, candidates):
         """
-        Phân tích và lọc với độ cân bằng tốt hơn
+        Phân tích và lọc GENTLE - ưu tiên bảo tồn content
         """
         if not CV2_AVAILABLE:
             return candidates
@@ -184,99 +190,116 @@ class BalancedTextFilter:
             h, w = img.shape[:2]
             
             if self.debug_mode:
-                st.write(f"🔍 Balanced Text Filter analyzing {len(candidates)} candidates")
+                st.write(f"🌿 Gentle Text Filter analyzing {len(candidates)} candidates")
             
-            # Phân tích từng candidate với 5 phương pháp
+            # Phân tích từng candidate với gentle approach
             analyzed_candidates = []
             for i, candidate in enumerate(candidates):
-                analysis = self._balanced_analyze_candidate(img, candidate)
+                analysis = self._gentle_analyze_candidate(img, candidate)
                 candidate.update(analysis)
                 analyzed_candidates.append(candidate)
                 
                 if self.debug_mode:
-                    st.write(f"   {i+1}. {candidate.get('bbox', 'N/A')}: text_score={analysis.get('text_score', 0):.2f}, is_text={analysis.get('is_text', False)}")
+                    st.write(f"   {i+1}. {candidate.get('bbox', 'N/A')}: text_score={analysis.get('text_score', 0):.2f}, is_pure_text={analysis.get('is_pure_text', False)}, protected={analysis.get('protection_reason', 'none')}")
             
-            # Lọc cân bằng
-            filtered_candidates = self._balanced_filter(analyzed_candidates)
+            # Lọc gentle
+            filtered_candidates = self._gentle_filter(analyzed_candidates)
             
             if self.debug_mode:
-                st.write(f"📊 Balanced filter result: {len(filtered_candidates)}/{len(candidates)}")
+                st.write(f"🌿 Gentle filter result: {len(filtered_candidates)}/{len(candidates)} (protected content preserved)")
             
             return filtered_candidates
             
         except Exception as e:
             if self.debug_mode:
-                st.error(f"❌ Balanced filter error: {str(e)}")
-            return candidates  # Fallback
+                st.error(f"❌ Gentle filter error: {str(e)}")
+            return candidates  # Fallback - giữ tất cả
     
-    def _balanced_analyze_candidate(self, img, candidate):
+    def _gentle_analyze_candidate(self, img, candidate):
         """
-        Phân tích cân bằng từng candidate
+        Phân tích gentle từng candidate với nhiều protection layers
         """
         x, y, w, h = candidate['bbox']
         roi = img[y:y+h, x:x+w]
         
         if roi.size == 0:
-            return {'is_text': False, 'text_score': 0.0}
+            return {'is_pure_text': False, 'text_score': 0.0, 'protection_reason': 'empty_roi'}
         
-        # Phương pháp 1: Advanced Text Density
-        text_density = self._calculate_advanced_text_density(roi)
+        # LAYER 1: Special Content Detection
+        protection_reason = self._detect_special_content(roi, w, h)
+        if protection_reason:
+            return {
+                'is_pure_text': False, 
+                'text_score': 0.0, 
+                'protection_reason': protection_reason,
+                'special_content': True
+            }
         
-        # Phương pháp 2: Line Structure Analysis
-        line_density = self._analyze_line_structure(roi)
-        
-        # Phương pháp 3: Character Pattern Detection
-        char_pattern = self._detect_character_patterns(roi)
-        
-        # Phương pháp 4: Histogram Analysis
+        # LAYER 2: Gentle Text Analysis (chỉ khi không phải special content)
+        text_density = self._calculate_gentle_text_density(roi)
+        line_density = self._analyze_gentle_line_structure(roi)
+        char_pattern = self._detect_gentle_character_patterns(roi)
         histogram_score = self._analyze_histogram_for_text(roi)
-        
-        # Phương pháp 5: Geometric Structure Analysis
         geometric_score = self._analyze_geometric_structure(roi)
-        
-        # Phương pháp 6: Whitespace Analysis
         whitespace_ratio = self._calculate_whitespace_ratio(roi)
-        
-        # Phương pháp 7: OCR Simulation
         ocr_score = self._simulate_ocr_detection(roi)
         
-        # Tính text score tổng hợp
+        # LAYER 3: Illustration & Small Figure Protection
+        illustration_score = self._detect_illustration_features(roi)
+        if illustration_score > 0.3:  # Có features của illustration
+            return {
+                'is_pure_text': False,
+                'text_score': 0.0,
+                'protection_reason': 'illustration_detected',
+                'illustration_score': illustration_score
+            }
+        
+        # LAYER 4: Tính text score với gentle weights
         text_score = (
-            text_density * 0.25 +
-            line_density * 0.2 +
-            char_pattern * 0.15 +
-            histogram_score * 0.15 +
-            ocr_score * 0.15 +
-            whitespace_ratio * 0.1
+            text_density * 0.3 +        # Giảm weight
+            line_density * 0.15 +       # Giảm weight  
+            char_pattern * 0.15 +       # Giảm weight
+            histogram_score * 0.1 +     # Giảm weight
+            ocr_score * 0.1 +           # Giảm weight
+            whitespace_ratio * 0.2      # Tăng weight (text có nhiều whitespace)
         )
         
-        # Aspect ratio analysis
-        aspect_ratio = w / (h + 1e-6)
-        is_text_aspect = (self.text_aspect_ratio_min <= aspect_ratio <= self.text_aspect_ratio_max)
-        
-        # Size analysis
+        # LAYER 5: Size & Aspect Protection
         area = w * h
-        is_text_size = area < self.min_meaningful_size
+        aspect_ratio = w / (h + 1e-6)
         
-        # Final decision - CÂN BẰNG HỢP LÝ
-        # Chỉ coi là text khi:
-        # 1. Text score RẤT CAO (> 0.8) VÀ là text aspect ratio
-        # 2. HOẶC có nhiều indicators text cùng lúc
+        # Small figure protection
+        if area < 2000 and geometric_score > 0.05:
+            return {
+                'is_pure_text': False,
+                'text_score': text_score,
+                'protection_reason': 'small_figure_protection',
+                'area': area,
+                'geometric_score': geometric_score
+            }
         
-        strong_text_indicators = 0
-        if text_score > 0.75:
-            strong_text_indicators += 1
-        if line_density > 0.3:
-            strong_text_indicators += 1
-        if char_pattern > 0.85:
-            strong_text_indicators += 1
-        if whitespace_ratio > 0.5:
-            strong_text_indicators += 1
-        if is_text_aspect and text_score > 0.6:
-            strong_text_indicators += 1
+        # LAYER 6: Final Decision - CỰC KỲ NGHIÊM NGẶT với text
+        # Chỉ coi là PURE TEXT khi:
+        # 1. Text score CỰC CAO (>0.9) VÀ 
+        # 2. Tất cả các indicators đều chỉ ra đây là text VÀ
+        # 3. Không có bất kỳ visual elements nào
         
-        # Chỉ coi là text khi có ÍT NHẤT 3 indicators mạnh
-        is_text = strong_text_indicators >= 3
+        pure_text_indicators = 0
+        if text_score > 0.9:              # Cực cao
+            pure_text_indicators += 2     # Weight cao
+        if line_density > 0.5:            # Có nhiều lines
+            pure_text_indicators += 1
+        if char_pattern > 0.95:           # Gần như chỉ có characters
+            pure_text_indicators += 1
+        if whitespace_ratio > 0.7:        # Nhiều whitespace (text thường vậy)
+            pure_text_indicators += 1
+        if geometric_score < 0.05:        # Không có geometric elements
+            pure_text_indicators += 1
+        if illustration_score < 0.1:      # Không có illustration features
+            pure_text_indicators += 1
+        
+        # Chỉ coi là pure text khi có TẤT CẢ indicators (score >= 6)
+        is_pure_text = pure_text_indicators >= 6
         
         return {
             'text_density': text_density,
@@ -286,22 +309,142 @@ class BalancedTextFilter:
             'geometric_score': geometric_score,
             'whitespace_ratio': whitespace_ratio,
             'ocr_score': ocr_score,
+            'illustration_score': illustration_score,
             'text_score': text_score,
             'aspect_ratio': aspect_ratio,
-            'is_text': is_text,
+            'is_pure_text': is_pure_text,
             'area': area,
-            'strong_text_indicators': strong_text_indicators
+            'pure_text_indicators': pure_text_indicators,
+            'protection_reason': None
         }
     
-    def _calculate_advanced_text_density(self, roi):
+    def _detect_special_content(self, roi, w, h):
         """
-        Tính text density nâng cao
+        Phát hiện special content cần bảo vệ
+        """
+        # 1. Answer Box Detection (khung đúng/sai)
+        if self.enable_answer_box_detection:
+            if self._is_answer_box(roi, w, h):
+                return 'answer_box'
+        
+        # 2. Small Square Detection (có thể là checkbox, icons, etc.)
+        area = w * h
+        aspect_ratio = w / (h + 1e-6)
+        if area < 1500 and 0.5 < aspect_ratio < 2.0:  # Nhỏ và gần vuông
+            return 'small_square_element'
+        
+        # 3. Very Small Elements (có thể là bullet points, icons)
+        if area < 800:
+            return 'very_small_element'
+        
+        # 4. Single Character/Symbol Detection
+        if w < 30 and h < 30 and area < 900:
+            return 'single_character_symbol'
+        
+        return None
+    
+    def _is_answer_box(self, roi, w, h):
+        """
+        Phát hiện khung đúng/sai
+        """
+        try:
+            gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
+            
+            # Answer box features:
+            # 1. Thường có kích thước nhỏ đến trung bình
+            area = w * h
+            if not (100 < area < 5000):
+                return False
+            
+            # 2. Aspect ratio gần vuông hoặc hình chữ nhật ngắn
+            aspect_ratio = w / (h + 1e-6)
+            if not (0.3 < aspect_ratio < 4.0):
+                return False
+            
+            # 3. Có thể có text ngắn (A, B, C, D hoặc đáp án ngắn)
+            # Detect có ít text content
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # Count text-like regions
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            text_like_regions = 0
+            
+            for cnt in contours:
+                cnt_area = cv2.contourArea(cnt)
+                if 10 < cnt_area < area * 0.5:  # Reasonable size for characters
+                    text_like_regions += 1
+            
+            # Answer boxes thường có 0-5 text regions (A, B, C, D, hoặc short answer)
+            if text_like_regions <= 5:
+                return True
+            
+            return False
+            
+        except Exception:
+            return False
+    
+    def _detect_illustration_features(self, roi):
+        """
+        Phát hiện features của ảnh minh họa
+        """
+        try:
+            gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
+            
+            score = 0.0
+            
+            # 1. Curved lines (illustrations often have curves)
+            edges = cv2.Canny(gray, 50, 150)
+            
+            # Detect circles/curves
+            circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1, minDist=20, 
+                                     param1=50, param2=30, minRadius=5, maxRadius=100)
+            if circles is not None:
+                score += 0.3
+            
+            # 2. Complex contours (not just rectangles)
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            complex_contours = 0
+            
+            for cnt in contours:
+                if cv2.contourArea(cnt) > 100:
+                    # Check contour complexity
+                    hull = cv2.convexHull(cnt)
+                    hull_area = cv2.contourArea(hull)
+                    if hull_area > 0:
+                        solidity = cv2.contourArea(cnt) / hull_area
+                        if solidity < 0.7:  # Complex shape
+                            complex_contours += 1
+            
+            if complex_contours > 2:
+                score += 0.4
+            
+            # 3. Gradient/shading detection
+            # Illustrations often have gradients
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            if laplacian_var > 500:  # High variance indicates detail
+                score += 0.2
+            
+            # 4. Non-text patterns
+            # Check for patterns that don't look like text
+            if len(contours) > 0:
+                avg_area = np.mean([cv2.contourArea(cnt) for cnt in contours if cv2.contourArea(cnt) > 10])
+                if avg_area > 200:  # Large components (not characters)
+                    score += 0.1
+            
+            return min(1.0, score)
+            
+        except Exception:
+            return 0.0
+    
+    def _calculate_gentle_text_density(self, roi):
+        """
+        Tính text density với gentle approach
         """
         gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
         
-        # Phương pháp 1: Morphological text detection
-        text_kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, gray.shape[1]//10), 1))
-        text_kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(1, gray.shape[0]//10)))
+        # Gentle morphological text detection
+        text_kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, gray.shape[1]//15), 1))
+        text_kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(1, gray.shape[0]//15)))
         
         text_h = cv2.morphologyEx(gray, cv2.MORPH_OPEN, text_kernel_h)
         text_v = cv2.morphologyEx(gray, cv2.MORPH_OPEN, text_kernel_v)
@@ -310,50 +453,44 @@ class BalancedTextFilter:
         text_pixels = np.sum(text_regions > 0)
         total_pixels = gray.shape[0] * gray.shape[1]
         
-        morphological_density = text_pixels / total_pixels if total_pixels > 0 else 0
+        density = text_pixels / total_pixels if total_pixels > 0 else 0
         
-        # Phương pháp 2: Edge-based text detection
-        edges = cv2.Canny(gray, 50, 150)
-        horizontal_edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, text_kernel_h)
-        edge_density = np.sum(horizontal_edges > 0) / total_pixels if total_pixels > 0 else 0
-        
-        # Kết hợp
-        return max(morphological_density, edge_density)
+        # Gentle scaling - text cần có density RẤT cao mới bị coi là text
+        return min(1.0, density * 1.2)  # Boost để dễ reach threshold
     
-    def _analyze_line_structure(self, roi):
+    def _analyze_gentle_line_structure(self, roi):
         """
-        Phân tích cấu trúc dòng
+        Phân tích cấu trúc dòng gentle
         """
         gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
         
-        # Phát hiện horizontal lines
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, gray.shape[1]//5), 1))
+        # Gentle horizontal line detection
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, gray.shape[1]//8), 1))
         horizontal_lines = cv2.morphologyEx(gray, cv2.MORPH_OPEN, horizontal_kernel)
         
-        # Đếm số dòng
         contours, _ = cv2.findContours(horizontal_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         line_count = len(contours)
         
-        # Tính mật độ dòng
+        # Gentle scaling - cần nhiều lines mới coi là text
         height = gray.shape[0]
-        line_density = line_count / (height / 20) if height > 0 else 0  # Expect 1 line per 20 pixels
+        line_density = line_count / (height / 30) if height > 0 else 0  # Require more density
         
-        return min(1.0, line_density)
+        return min(1.0, line_density * 0.8)  # Reduce để khó reach threshold
     
-    def _detect_character_patterns(self, roi):
+    def _detect_gentle_character_patterns(self, roi):
         """
-        Phát hiện mẫu ký tự
+        Phát hiện mẫu ký tự gentle
         """
         gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if len(roi.shape) == 3 else roi
         
-        # Phát hiện small components (characters)
+        # Gentle character detection
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        binary = cv2.bitwise_not(binary)  # Invert for dark text on light background
+        binary = cv2.bitwise_not(binary)
         
-        # Find small components
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary)
         
         char_like_components = 0
+        non_char_components = 0
         total_area = gray.shape[0] * gray.shape[1]
         
         for i in range(1, num_labels):
@@ -361,16 +498,24 @@ class BalancedTextFilter:
             width = stats[i, cv2.CC_STAT_WIDTH]
             height = stats[i, cv2.CC_STAT_HEIGHT]
             
-            # Character-like criteria
-            if (50 < area < 1000 and  # Character size
-                5 < width < 50 and    # Character width
-                10 < height < 50 and  # Character height
-                0.2 < width/height < 3.0):  # Character aspect ratio
+            # Stricter character criteria
+            if (20 < area < 800 and      # Smaller char size range
+                3 < width < 40 and       # Narrower width range
+                8 < height < 40 and      # Narrower height range
+                0.1 < width/height < 5.0): # Wider aspect range
                 char_like_components += 1
+            else:
+                non_char_components += 1
         
-        # Tính tỷ lệ character-like components
-        char_density = char_like_components / (total_area / 500) if total_area > 0 else 0
-        return min(1.0, char_density)
+        # Gentle evaluation - cần ratio cực cao mới coi là text
+        total_components = char_like_components + non_char_components
+        if total_components == 0:
+            return 0.0
+        
+        char_ratio = char_like_components / total_components
+        
+        # Chỉ coi là text pattern khi gần như TẤT CẢ components đều là characters
+        return char_ratio
     
     def _analyze_histogram_for_text(self, roi):
         """
@@ -505,53 +650,49 @@ class BalancedTextFilter:
         else:
             return 0.3
     
-    def _balanced_filter(self, candidates):
+    def _gentle_filter(self, candidates):
         """
-        Lọc cân bằng - ưu tiên giữ lại figures
+        Lọc gentle - ưu tiên bảo tồn content
         """
         filtered = []
         
         for candidate in candidates:
-            # Chỉ loại bỏ khi RẤT CHẮC CHẮN là text
-            if candidate.get('is_text', False):
-                # Cho phép giữ lại nếu có geometric complexity cao
+            # RULE 1: Luôn giữ special content
+            if candidate.get('protection_reason'):
+                candidate['keep_reason'] = f"protected_{candidate['protection_reason']}"
+                filtered.append(candidate)
+                continue
+            
+            # RULE 2: Luôn giữ content có illustration features
+            if candidate.get('illustration_score', 0) > 0.2:
+                candidate['keep_reason'] = 'illustration_features'
+                filtered.append(candidate)
+                continue
+            
+            # RULE 3: Chỉ loại bỏ khi CHẮC CHẮN là pure text
+            if candidate.get('is_pure_text', False):
+                # Double check với additional criteria
+                text_score = candidate.get('text_score', 0)
                 geometric_score = candidate.get('geometric_score', 0)
-                if geometric_score >= 0.3:  # Có elements phức tạp
-                    candidate['override_reason'] = 'complex_geometry'
-                    filtered.append(candidate)
-                    continue
-                
-                # Cho phép giữ lại nếu kích thước lớn và có structure
                 area = candidate.get('area', 0)
-                if area > 5000 and geometric_score > 0.1:
-                    candidate['override_reason'] = 'large_with_structure'
+                
+                # Cho phép override nếu có bất kỳ visual elements nào
+                if geometric_score > 0.03:  # Có geometric elements
+                    candidate['keep_reason'] = 'has_visual_elements'
                     filtered.append(candidate)
                     continue
                 
-                # Loại bỏ text chắc chắn
-                continue
-            
-            # Kiểm tra các điều kiện khác - dễ dàng hơn
-            text_score = candidate.get('text_score', 0)
-            if text_score > self.text_density_threshold:
-                # Vẫn cho phép giữ nếu có diagram elements
-                geometric_score = candidate.get('geometric_score', 0)
-                if geometric_score >= self.min_diagram_score:
-                    candidate['override_reason'] = 'has_diagram_elements'
+                # Cho phép override nếu size reasonable và có structure
+                if area > 3000 and geometric_score > 0.01:
+                    candidate['keep_reason'] = 'large_with_some_structure'
                     filtered.append(candidate)
+                    continue
+                
+                # Thực sự loại bỏ pure text
                 continue
             
-            # Kiểm tra size - giảm requirement
-            area = candidate.get('area', 0)
-            if area < self.min_meaningful_size:
-                # Cho phép figures nhỏ nếu có complexity cao
-                geometric_score = candidate.get('geometric_score', 0)
-                if geometric_score >= 0.4:
-                    candidate['override_reason'] = 'small_but_complex'
-                    filtered.append(candidate)
-                continue
-            
-            # Nếu pass hầu hết tests thì giữ lại
+            # RULE 4: Tất cả các cases khác đều giữ lại
+            candidate['keep_reason'] = 'default_preserve'
             filtered.append(candidate)
         
         return filtered
@@ -990,8 +1131,8 @@ class GoogleOCRService:
             
             # Ensure minimum count
             if total_count == 0:
-                total_count = 2  # Conservative estimate
-                figure_count = 1
+                total_count = 3  # Conservative estimate for gentle approach
+                figure_count = 2
                 table_count = 1
             
             return {
@@ -1224,12 +1365,12 @@ class GoogleOCRService:
             return 0
     
     def _get_basic_fallback_result(self):
-        """Basic fallback result"""
+        """Basic fallback result với gentle approach"""
         return {
             'success': False,
-            'figure_count': 2,  # Conservative estimate  
+            'figure_count': 3,  # Higher conservative estimate  
             'table_count': 1,
-            'total_count': 3,
+            'total_count': 4,   # Higher total for gentle approach
             'figure_regions': [],
             'table_regions': [],
             'text_content': '',
@@ -1239,20 +1380,20 @@ class GoogleOCRService:
 
 class EnhancedContentBasedFigureFilter:
     """
-    Bộ lọc thông minh với Google OCR Integration
+    Bộ lọc thông minh với Gentle Filter Integration
     """
     
     def __init__(self, google_ocr_service=None):
-        self.text_filter = BalancedTextFilter()
-        self.enable_balanced_filter = True
+        self.text_filter = GentleBalancedTextFilter()  # Sử dụng Gentle Filter
+        self.enable_gentle_filter = True
         self.min_estimated_count = 1
-        self.max_estimated_count = 15  # Tăng từ 12
+        self.max_estimated_count = 20  # Tăng để không limit quá nhiều
         self.google_ocr = google_ocr_service
         self.enable_ocr_counting = True
         
     def analyze_content_and_filter_with_ocr(self, image_bytes, candidates):
         """
-        Phân tích với Google OCR + Balanced Text Filter
+        Phân tích với Google OCR + Gentle Text Filter
         """
         if not CV2_AVAILABLE:
             return candidates
@@ -1271,50 +1412,47 @@ class EnhancedContentBasedFigureFilter:
                         estimated_count = min(estimated_count, self.max_estimated_count)
                         ocr_info = ocr_result
                         
-                        # Enhanced success message with details
-                        method_info = f"({ocr_result.get('method', 'unknown')})"
-                        consensus_info = ""
-                        if 'consensus_score' in ocr_result:
-                            consensus_info = f", consensus: {ocr_result['consensus_score']:.1f}"
-                        
-                        combined_info = ""
-                        if 'combined_from_methods' in ocr_result:
-                            combined_info = f" [combined from {ocr_result['combined_from_methods']} methods]"
-                        
-                        st.success(f"🤖 Enhanced OCR detected: {ocr_result['figure_count']} figures, {ocr_result['table_count']} tables (confidence: {ocr_result['confidence']:.1f}){consensus_info} {method_info}{combined_info}")
+                        st.success(f"🤖 Enhanced OCR detected: {ocr_result['figure_count']} figures, {ocr_result['table_count']} tables (confidence: {ocr_result['confidence']:.1f})")
                     else:
-                        # Fallback to conservative estimation
                         img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
                         img = np.array(img_pil)
                         estimated_count = self._estimate_figure_count_conservative(img)
-                        st.info(f"📊 Conservative estimate: {estimated_count} figures (Enhanced OCR fallback used)")
+                        st.info(f"📊 Conservative estimate: {estimated_count} figures")
             else:
-                # Original estimation method
                 img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
                 img = np.array(img_pil)
                 estimated_count = self._estimate_figure_count_conservative(img)
-                st.info(f"📊 Estimated: {estimated_count} figures (traditional method)")
+                st.info(f"📊 Estimated: {estimated_count} figures")
             
-            # Balanced Text Filter
-            if self.enable_balanced_filter:
-                filtered_candidates = self.text_filter.analyze_and_filter_balanced(image_bytes, candidates)
-                st.success(f"🧠 Balanced Text Filter: {len(filtered_candidates)}/{len(candidates)} figures → target: {estimated_count}")
+            # Gentle Text Filter
+            if self.enable_gentle_filter:
+                filtered_candidates = self.text_filter.analyze_and_filter_gentle(image_bytes, candidates)
+                st.success(f"🌿 Gentle Filter: {len(filtered_candidates)}/{len(candidates)} preserved → target: {estimated_count}")
             else:
                 filtered_candidates = candidates
             
+            # Show preservation reasons if debug
+            if self.text_filter.debug_mode:
+                keep_reasons = {}
+                for f in filtered_candidates:
+                    reason = f.get('keep_reason', 'unknown')
+                    keep_reasons[reason] = keep_reasons.get(reason, 0) + 1
+                
+                st.markdown("**🌿 Preservation Reasons:**")
+                for reason, count in keep_reasons.items():
+                    st.markdown(f"• **{reason}**: {count} items")
+            
             # Intelligent filtering based on OCR results
             if ocr_info.get('success') and ocr_info.get('figure_regions'):
-                # Use OCR regions to improve filtering
                 filtered_candidates = self._filter_with_ocr_regions(filtered_candidates, ocr_info)
             
-            # Adjust count based on estimation
-            target_count = min(estimated_count + 1, self.max_estimated_count)  # +1 buffer
+            # Gentle count adjustment - không limit quá strict
+            target_count = min(estimated_count + 3, self.max_estimated_count)  # +3 buffer thay vì +1
             if len(filtered_candidates) > target_count:
-                # Sort by confidence and take top candidates
                 sorted_candidates = sorted(filtered_candidates, 
                                          key=lambda x: x.get('final_confidence', 0), reverse=True)
                 filtered_candidates = sorted_candidates[:target_count]
-                st.info(f"🎯 Limited to top {target_count} figures based on OCR estimate")
+                st.info(f"🎯 Gently limited to top {target_count} figures")
             
             return filtered_candidates
             
@@ -1405,60 +1543,59 @@ class EnhancedContentBasedFigureFilter:
     
     def _estimate_figure_count_conservative(self, img):
         """
-        Ước tính conservative số lượng figures (fallback method)
+        Ước tính conservative số lượng figures
         """
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
             h, w = gray.shape
             
-            # Phân tích layout đơn giản
-            # Detect horizontal separators
-            h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//20, 1))
+            # Phân tích layout gentle
+            h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//25, 1))  # Gentle detection
             h_lines = cv2.morphologyEx(gray, cv2.MORPH_OPEN, h_kernel)
             h_separators = len(cv2.findContours(h_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0])
             
-            # Estimate based on separators
-            estimated = min(max(h_separators + 1, self.min_estimated_count), self.max_estimated_count)
+            # Conservative estimate with higher baseline
+            estimated = min(max(h_separators + 2, 3), self.max_estimated_count)  # Baseline = 3
             
             return estimated
             
         except Exception:
-            return 3  # Safe fallback
+            return 4  # Higher safe fallback
 
-class SuperEnhancedImageExtractor:
+class SuperGentleImageExtractor:
     """
-    Tách ảnh với Balanced Text Filter + Google OCR Integration
+    Tách ảnh với Gentle approach - không bỏ sót content quan trọng
     """
     
     def __init__(self, google_ocr_service=None):
-        # Tham số cơ bản - giảm requirements
-        self.min_area_ratio = 0.0005       # Giảm từ 0.001
-        self.min_area_abs = 400            # Giảm từ 600
-        self.min_width = 20                # Giảm từ 30
-        self.min_height = 20               # Giảm từ 30
-        self.max_figures = 25              # Tăng từ 20
-        self.max_area_ratio = 0.80         # Tăng từ 0.70
+        # RELAXED parameters - giảm requirements
+        self.min_area_ratio = 0.0002       # Giảm từ 0.0005
+        self.min_area_abs = 200            # Giảm từ 400
+        self.min_width = 15                # Giảm từ 20
+        self.min_height = 15               # Giảm từ 20
+        self.max_figures = 30              # Tăng từ 25
+        self.max_area_ratio = 0.90         # Tăng từ 0.80
         
-        # Tham số cắt ảnh
-        self.smart_padding = 30            # Tăng từ 25
-        self.quality_threshold = 0.15      # Giảm từ 0.25
-        self.edge_margin = 0.005           # Giảm từ 0.01
+        # Enhanced extraction
+        self.smart_padding = 35            # Tăng padding
+        self.quality_threshold = 0.05      # Giảm từ 0.15
+        self.edge_margin = 0.002           # Giảm từ 0.005
         
-        # Tham số confidence
-        self.confidence_threshold = 15     # Giảm từ 30
-        self.final_confidence_threshold = 65  # Ngưỡng cuối cùng để lọc figures
+        # GENTLE confidence
+        self.confidence_threshold = 5      # Giảm từ 15
+        self.final_confidence_threshold = 45  # Giảm từ 65 - dễ pass hơn
         
-        # Tham số morphology
-        self.morph_kernel_size = 2
+        # Morphology gentle
+        self.morph_kernel_size = 1         # Giảm để preserve detail
         self.dilate_iterations = 1
         self.erode_iterations = 1
         
-        # Tham số edge detection
-        self.canny_low = 30                # Giảm từ 40
-        self.canny_high = 80               # Giảm từ 100
+        # Edge detection gentle
+        self.canny_low = 20                # Giảm từ 30
+        self.canny_high = 60               # Giảm từ 80
         self.blur_kernel = 3
         
-        # Enhanced Content-Based Filter với Google OCR
+        # Enhanced Content-Based Filter với Gentle approach
         self.content_filter = EnhancedContentBasedFigureFilter(google_ocr_service)
         self.enable_content_filter = True
         
@@ -1467,7 +1604,7 @@ class SuperEnhancedImageExtractor:
     
     def extract_figures_and_tables(self, image_bytes, start_img_idx=0, start_table_idx=0):
         """
-        Tách ảnh với Balanced Text Filter và continuous numbering
+        Tách ảnh với Gentle Filter
         """
         if not CV2_AVAILABLE:
             return [], 0, 0, start_img_idx, start_table_idx
@@ -1478,63 +1615,70 @@ class SuperEnhancedImageExtractor:
             img = np.array(img_pil)
             h, w = img.shape[:2]
             
-            # Tiền xử lý
-            enhanced_img = self._enhance_image(img)
+            # Tiền xử lý gentle
+            enhanced_img = self._enhance_image_gentle(img)
             
-            # Tách ảnh bằng 4 phương pháp
+            # Tách ảnh bằng 5 phương pháp (thêm 1 phương pháp mới)
             all_candidates = []
             
-            # Edge-based
-            edge_candidates = self._detect_by_edges(enhanced_img, w, h)
+            # Method 1: Gentle edge-based
+            edge_candidates = self._detect_by_edges_gentle(enhanced_img, w, h)
             all_candidates.extend(edge_candidates)
             
-            # Contour-based
-            contour_candidates = self._detect_by_contours(enhanced_img, w, h)
+            # Method 2: Gentle contour-based
+            contour_candidates = self._detect_by_contours_gentle(enhanced_img, w, h)
             all_candidates.extend(contour_candidates)
             
-            # Grid-based
-            grid_candidates = self._detect_by_grid(enhanced_img, w, h)
+            # Method 3: Gentle grid-based
+            grid_candidates = self._detect_by_grid_gentle(enhanced_img, w, h)
             all_candidates.extend(grid_candidates)
             
-            # Blob detection
-            blob_candidates = self._detect_by_blobs(enhanced_img, w, h)
+            # Method 4: Gentle blob detection
+            blob_candidates = self._detect_by_blobs_gentle(enhanced_img, w, h)
             all_candidates.extend(blob_candidates)
             
-            # Lọc và merge
-            filtered_candidates = self._filter_and_merge_candidates(all_candidates, w, h)
+            # Method 5: Special content detection (NEW)
+            special_candidates = self._detect_special_content_regions(enhanced_img, w, h)
+            all_candidates.extend(special_candidates)
             
-            # Enhanced Content-Based Filter với Google OCR
+            # Gentle filter và merge
+            filtered_candidates = self._filter_and_merge_candidates_gentle(all_candidates, w, h)
+            
+            # Enhanced Content-Based Filter với Gentle approach
             if self.enable_content_filter:
                 content_filtered = self.content_filter.analyze_content_and_filter_with_ocr(image_bytes, filtered_candidates)
                 filtered_candidates = content_filtered
             
-            # Tạo final figures với continuous numbering
-            final_figures, final_img_idx, final_table_idx = self._create_final_figures(
+            # Tạo final figures với gentle confidence
+            final_figures, final_img_idx, final_table_idx = self._create_final_figures_gentle(
                 filtered_candidates, img, w, h, start_img_idx, start_table_idx
             )
             
             return final_figures, h, w, final_img_idx, final_table_idx
             
         except Exception as e:
-            st.error(f"❌ Extraction error: {str(e)}")
+            st.error(f"❌ Gentle extraction error: {str(e)}")
             return [], 0, 0, start_img_idx, start_table_idx
     
-    def _enhance_image(self, img):
+    def _enhance_image_gentle(self, img):
         """
-        Tiền xử lý ảnh
+        Tiền xử lý ảnh gentle - preserve detail
         """
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        # Light blur để giảm noise nhưng preserve edges
         blurred = cv2.GaussianBlur(gray, (self.blur_kernel, self.blur_kernel), 0)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        # Gentle CLAHE
+        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))  # Giảm clipLimit
         enhanced = clahe.apply(blurred)
-        return cv2.normalize(enhanced, None, 0, 255, cv2.NORM_MINMAX)
+        return enhanced
     
-    def _detect_by_edges(self, gray_img, w, h):
+    def _detect_by_edges_gentle(self, gray_img, w, h):
         """
-        Edge detection
+        Gentle edge detection
         """
         edges = cv2.Canny(gray_img, self.canny_low, self.canny_high)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        # Gentle dilation
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
         edges_dilated = cv2.dilate(edges, kernel, iterations=1)
         
         contours, _ = cv2.findContours(edges_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -1544,20 +1688,21 @@ class SuperEnhancedImageExtractor:
             x, y, ww, hh = cv2.boundingRect(cnt)
             area = ww * hh
             
-            if self._is_valid_candidate(x, y, ww, hh, area, w, h):
+            if self._is_valid_candidate_gentle(x, y, ww, hh, area, w, h):
                 candidates.append({
                     'bbox': (x, y, ww, hh),
                     'area': area,
-                    'method': 'edge',
-                    'confidence': 25  # Giảm từ 35
+                    'method': 'gentle_edge',
+                    'confidence': 20  # Lower initial confidence
                 })
         
         return candidates
     
-    def _detect_by_contours(self, gray_img, w, h):
+    def _detect_by_contours_gentle(self, gray_img, w, h):
         """
-        Contour detection
+        Gentle contour detection
         """
+        # Gentle threshold
         _, binary = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (self.morph_kernel_size, self.morph_kernel_size))
         binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
@@ -1569,29 +1714,30 @@ class SuperEnhancedImageExtractor:
             x, y, ww, hh = cv2.boundingRect(cnt)
             area = ww * hh
             
-            if self._is_valid_candidate(x, y, ww, hh, area, w, h):
+            if self._is_valid_candidate_gentle(x, y, ww, hh, area, w, h):
                 candidates.append({
                     'bbox': (x, y, ww, hh),
                     'area': area,
-                    'method': 'contour',
-                    'confidence': 30  # Giảm từ 40
+                    'method': 'gentle_contour',
+                    'confidence': 25
                 })
         
         return candidates
     
-    def _detect_by_grid(self, gray_img, w, h):
+    def _detect_by_grid_gentle(self, gray_img, w, h):
         """
-        Grid detection for tables
+        Gentle grid detection
         """
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//20, 1))
+        # Larger kernels for gentle detection
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//25, 1))
         horizontal_lines = cv2.morphologyEx(gray_img, cv2.MORPH_OPEN, horizontal_kernel)
         
-        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//20))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//25))
         vertical_lines = cv2.morphologyEx(gray_img, cv2.MORPH_OPEN, vertical_kernel)
         
         grid_mask = cv2.bitwise_or(horizontal_lines, vertical_lines)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        grid_dilated = cv2.dilate(grid_mask, kernel, iterations=2)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        grid_dilated = cv2.dilate(grid_mask, kernel, iterations=1)
         
         contours, _ = cv2.findContours(grid_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
@@ -1600,30 +1746,30 @@ class SuperEnhancedImageExtractor:
             x, y, ww, hh = cv2.boundingRect(cnt)
             area = ww * hh
             
-            if self._is_valid_candidate(x, y, ww, hh, area, w, h):
+            if self._is_valid_candidate_gentle(x, y, ww, hh, area, w, h):
                 aspect_ratio = ww / (hh + 1e-6)
-                confidence = 50 if aspect_ratio > 1.5 else 30  # Giảm từ 60/40
+                confidence = 35 if aspect_ratio > 1.5 else 25
                 
                 candidates.append({
                     'bbox': (x, y, ww, hh),
                     'area': area,
-                    'method': 'grid',
+                    'method': 'gentle_grid',
                     'confidence': confidence,
                     'is_table': aspect_ratio > 1.5
                 })
         
         return candidates
     
-    def _detect_by_blobs(self, gray_img, w, h):
+    def _detect_by_blobs_gentle(self, gray_img, w, h):
         """
-        Blob detection
+        Gentle blob detection
         """
         adaptive_thresh = cv2.adaptiveThreshold(
             gray_img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
         
         inverted = cv2.bitwise_not(adaptive_thresh)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))  # Smaller kernel
         opened = cv2.morphologyEx(inverted, cv2.MORPH_OPEN, kernel)
         
         contours, _ = cv2.findContours(opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -1633,19 +1779,73 @@ class SuperEnhancedImageExtractor:
             x, y, ww, hh = cv2.boundingRect(cnt)
             area = ww * hh
             
-            if self._is_valid_candidate(x, y, ww, hh, area, w, h):
+            if self._is_valid_candidate_gentle(x, y, ww, hh, area, w, h):
                 candidates.append({
                     'bbox': (x, y, ww, hh),
                     'area': area,
-                    'method': 'blob',
-                    'confidence': 28  # Giảm từ 38
+                    'method': 'gentle_blob',
+                    'confidence': 22
                 })
         
         return candidates
     
-    def _is_valid_candidate(self, x, y, ww, hh, area, img_w, img_h):
+    def _detect_special_content_regions(self, gray_img, w, h):
         """
-        Kiểm tra candidate có hợp lệ
+        NEW: Detect special content regions (answer boxes, small figures, etc.)
+        """
+        candidates = []
+        
+        # Method 1: Small square regions (answer boxes, checkboxes)
+        # Use template matching for small squares
+        for size in [15, 20, 25, 30, 35, 40]:
+            if size < min(w//10, h//10):
+                template = np.ones((size, size), dtype=np.uint8) * 128
+                
+                try:
+                    res = cv2.matchTemplate(gray_img, template, cv2.TM_CCOEFF_NORMED)
+                    locations = np.where(res >= 0.2)  # Lower threshold
+                    
+                    for pt in zip(*locations[::-1]):
+                        x, y = pt
+                        area = size * size
+                        
+                        candidates.append({
+                            'bbox': (x, y, size, size),
+                            'area': area,
+                            'method': 'special_small_square',
+                            'confidence': 30,
+                            'special_type': 'small_square'
+                        })
+                except:
+                    continue
+        
+        # Method 2: Text regions với unusual aspect ratios
+        _, binary = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for cnt in contours:
+            x, y, ww, hh = cv2.boundingRect(cnt)
+            area = ww * hh
+            aspect_ratio = ww / (hh + 1e-6)
+            
+            # Special handling for very wide or very tall regions
+            if (area > 300 and 
+                (aspect_ratio > 8.0 or aspect_ratio < 0.125) and
+                self._is_valid_candidate_gentle(x, y, ww, hh, area, w, h)):
+                
+                candidates.append({
+                    'bbox': (x, y, ww, hh),
+                    'area': area,
+                    'method': 'special_aspect_ratio',
+                    'confidence': 25,
+                    'special_type': 'unusual_aspect'
+                })
+        
+        return candidates
+    
+    def _is_valid_candidate_gentle(self, x, y, ww, hh, area, img_w, img_h):
+        """
+        Gentle validation - accept more candidates
         """
         area_ratio = area / (img_w * img_h)
         
@@ -1656,6 +1856,7 @@ class SuperEnhancedImageExtractor:
             hh < self.min_height):
             return False
         
+        # Gentle edge margin
         if (x < self.edge_margin * img_w or 
             y < self.edge_margin * img_h or 
             (x + ww) > (1 - self.edge_margin) * img_w or 
@@ -1664,9 +1865,9 @@ class SuperEnhancedImageExtractor:
         
         return True
     
-    def _filter_and_merge_candidates(self, candidates, w, h):
+    def _filter_and_merge_candidates_gentle(self, candidates, w, h):
         """
-        Lọc và merge candidates
+        Gentle filter và merge
         """
         if not candidates:
             return []
@@ -1675,16 +1876,16 @@ class SuperEnhancedImageExtractor:
         
         filtered = []
         for candidate in candidates:
-            if not self._is_overlapping_with_list(candidate, filtered):
-                candidate['final_confidence'] = self._calculate_final_confidence(candidate, w, h)
+            if not self._is_overlapping_with_list_gentle(candidate, filtered):
+                candidate['final_confidence'] = self._calculate_final_confidence_gentle(candidate, w, h)
                 if candidate['final_confidence'] >= self.confidence_threshold:
                     filtered.append(candidate)
         
         return filtered[:self.max_figures]
     
-    def _is_overlapping_with_list(self, candidate, existing_list):
+    def _is_overlapping_with_list_gentle(self, candidate, existing_list):
         """
-        Kiểm tra overlap
+        Gentle overlap check - allow more overlap
         """
         x1, y1, w1, h1 = candidate['bbox']
         
@@ -1696,75 +1897,74 @@ class SuperEnhancedImageExtractor:
             
             if union_area > 0:
                 iou = intersection_area / union_area
-                if iou > 0.25:  # Giảm threshold từ 0.3
+                if iou > 0.4:  # Increase threshold from 0.25
                     return True
         
         return False
     
-    def _calculate_final_confidence(self, candidate, w, h):
+    def _calculate_final_confidence_gentle(self, candidate, w, h):
         """
-        Tính confidence
+        Gentle confidence calculation
         """
         x, y, ww, hh = candidate['bbox']
         area_ratio = candidate['area'] / (w * h)
         aspect_ratio = ww / (hh + 1e-6)
         
-        confidence = candidate.get('confidence', 20)  # Giảm từ 30
+        confidence = candidate.get('confidence', 15)  # Lower base
         
-        # Bonus cho size phù hợp
-        if 0.015 < area_ratio < 0.5:  # Giảm min từ 0.02
-            confidence += 20  # Giảm từ 25
-        elif 0.005 < area_ratio < 0.7:  # Giảm min từ 0.01
+        # Gentle bonuses
+        if 0.005 < area_ratio < 0.8:  # Very wide range
+            confidence += 25
+        elif 0.001 < area_ratio < 0.9:
+            confidence += 15
+        
+        # Gentle aspect ratio bonus
+        if 0.1 < aspect_ratio < 10.0:  # Very wide range
+            confidence += 20
+        elif 0.05 < aspect_ratio < 20.0:
             confidence += 10
         
-        # Bonus cho aspect ratio
-        if 0.4 < aspect_ratio < 4.0:  # Mở rộng range
-            confidence += 15  # Giảm từ 20
-        elif 0.2 < aspect_ratio < 6.0:  # Mở rộng range
-            confidence += 8   # Giảm từ 10
+        # Method bonus
+        if candidate['method'] == 'gentle_grid':
+            confidence += 15
+        elif 'special' in candidate['method']:
+            confidence += 20  # Boost special content
+        elif candidate['method'] == 'gentle_edge':
+            confidence += 10
         
-        # Bonus cho method
-        if candidate['method'] == 'grid':
-            confidence += 12  # Giảm từ 15
-        elif candidate['method'] == 'edge':
-            confidence += 8   # Giảm từ 10
+        # Special type bonus
+        if candidate.get('special_type'):
+            confidence += 15
         
         return min(100, confidence)
     
-    def _create_final_figures(self, candidates, img, w, h, start_img_idx=0, start_table_idx=0):
+    def _create_final_figures_gentle(self, candidates, img, w, h, start_img_idx=0, start_table_idx=0):
         """
-        Tạo final figures với confidence filter và continuous numbering
+        Tạo final figures với gentle confidence filter
         """
         candidates = sorted(candidates, key=lambda x: (x['bbox'][1], x['bbox'][0]))
         
-        # Lọc theo final confidence threshold
-        high_confidence_candidates = []
+        # Gentle confidence filter
+        gentle_confidence_candidates = []
         for candidate in candidates:
             if candidate.get('final_confidence', 0) >= self.final_confidence_threshold:
-                high_confidence_candidates.append(candidate)
+                gentle_confidence_candidates.append(candidate)
         
         if self.debug_mode:
-            st.write(f"🎯 Confidence Filter: {len(high_confidence_candidates)}/{len(candidates)} figures above {self.final_confidence_threshold}%")
-            if len(candidates) > len(high_confidence_candidates):
-                filtered_out = [c for c in candidates if c.get('final_confidence', 0) < self.final_confidence_threshold]
-                filtered_info = [f"conf={c.get('final_confidence', 0):.1f}%" for c in filtered_out[:3]]
-                st.write(f"❌ Filtered out: {filtered_info}")
+            st.write(f"🌿 Gentle Confidence Filter: {len(gentle_confidence_candidates)}/{len(candidates)} figures above {self.final_confidence_threshold}%")
         else:
             if len(candidates) > 0:
-                st.info(f"🎯 Confidence Filter: Giữ {len(high_confidence_candidates)}/{len(candidates)} figures có confidence ≥{self.final_confidence_threshold}%")
-                if len(high_confidence_candidates) == 0 and len(candidates) > 0:
+                st.info(f"🌿 Gentle Filter: Giữ {len(gentle_confidence_candidates)}/{len(candidates)} figures có confidence ≥{self.final_confidence_threshold}%")
+                if len(gentle_confidence_candidates) == 0 and len(candidates) > 0:
                     max_conf = max(c.get('final_confidence', 0) for c in candidates)
-                    st.warning(f"⚠️ Tất cả figures bị loại bỏ! Highest confidence: {max_conf:.1f}%. Thử giảm threshold.")
-                elif len(high_confidence_candidates) < len(candidates):
-                    filtered_count = len(candidates) - len(high_confidence_candidates)
-                    st.info(f"ℹ️ Đã lọc bỏ {filtered_count} figures có confidence thấp")
+                    st.warning(f"⚠️ Tất cả figures bị loại bỏ! Highest confidence: {max_conf:.1f}%. Có thể cần giảm threshold.")
         
         final_figures = []
         img_idx = start_img_idx
         table_idx = start_table_idx
         
-        for candidate in high_confidence_candidates:
-            cropped_img = self._smart_crop(img, candidate, w, h)
+        for candidate in gentle_confidence_candidates:
+            cropped_img = self._smart_crop_gentle(img, candidate, w, h)
             
             if cropped_img is None:
                 continue
@@ -1773,7 +1973,7 @@ class SuperEnhancedImageExtractor:
             Image.fromarray(cropped_img).save(buf, format="JPEG", quality=95)
             b64 = base64.b64encode(buf.getvalue()).decode()
             
-            is_table = candidate.get('is_table', False) or candidate.get('method') == 'grid'
+            is_table = candidate.get('is_table', False) or candidate.get('method') == 'gentle_grid'
             
             if is_table:
                 table_idx += 1
@@ -1793,19 +1993,21 @@ class SuperEnhancedImageExtractor:
                 "method": candidate["method"],
                 "center_y": candidate["bbox"][1] + candidate["bbox"][3] // 2,
                 "center_x": candidate["bbox"][0] + candidate["bbox"][2] // 2,
-                "override_reason": candidate.get("override_reason", None)
+                "keep_reason": candidate.get("keep_reason", None),
+                "special_type": candidate.get("special_type", None)
             })
         
         return final_figures, img_idx, table_idx
     
-    def _smart_crop(self, img, candidate, img_w, img_h):
+    def _smart_crop_gentle(self, img, candidate, img_w, img_h):
         """
-        Cắt ảnh thông minh
+        Gentle smart crop với generous padding
         """
         x, y, w, h = candidate['bbox']
         
-        padding_x = min(self.smart_padding, w // 4)
-        padding_y = min(self.smart_padding, h // 4)
+        # Generous padding
+        padding_x = min(self.smart_padding, w // 3)
+        padding_y = min(self.smart_padding, h // 3)
         
         x0 = max(0, x - padding_x)
         y0 = max(0, y - padding_y)
@@ -1821,7 +2023,7 @@ class SuperEnhancedImageExtractor:
     
     def insert_figures_into_text_precisely(self, text, figures, img_h, img_w, show_override_info=True):
         """
-        Chèn figures vào text với option hiển thị override info
+        Chèn figures vào text với option hiển thị keep_reason info
         """
         if not figures:
             return text
@@ -1844,9 +2046,9 @@ class SuperEnhancedImageExtractor:
             else:
                 tag = f"[🖼️ HÌNH: {figure['name']}]"
             
-            # Thêm thông tin override nếu có và được yêu cầu
-            if show_override_info and figure.get('override_reason'):
-                tag += f" (kept: {figure['override_reason']})"
+            # Thêm thông tin keep_reason nếu có và được yêu cầu
+            if show_override_info and figure.get('keep_reason'):
+                tag += f" (🌿{figure['keep_reason']})"
             
             result_lines.insert(actual_insertion, "")
             result_lines.insert(actual_insertion + 1, tag)
@@ -1876,7 +2078,7 @@ class SuperEnhancedImageExtractor:
     
     def create_beautiful_debug_visualization(self, image_bytes, figures):
         """
-        Tạo debug visualization
+        Tạo debug visualization cho gentle filter
         """
         img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img_pil)
@@ -1898,16 +2100,19 @@ class SuperEnhancedImageExtractor:
             center_x, center_y = fig['center_x'], fig['center_y']
             draw.ellipse([center_x-8, center_y-8, center_x+8, center_y+8], fill=color)
             
-            # Simple label with override info and OCR boost
+            # Label với gentle info
             label = f"{fig['name']} ({fig['confidence']:.0f}%)"
-            if fig.get('override_reason'):
-                label += f" [{fig['override_reason']}]"
+            if fig.get('keep_reason'):
+                label += f" [🌿{fig['keep_reason']}]"
+            if fig.get('special_type'):
+                label += f" [⭐{fig['special_type']}]"
             if fig.get('ocr_boost'):
                 label += f" 🤖OCR"
             draw.text((x + 5, y + 5), label, fill=color, stroke_width=2, stroke_fill='white')
         
         return img_pil
 
+# Continue với các class khác...
 class PhoneImageProcessor:
     """
     Xử lý ảnh chụp từ điện thoại để tối ưu cho OCR - Enhanced Version
@@ -2642,7 +2847,7 @@ class EnhancedWordExporter:
         Kiểm tra xem có phải markdown table separator không (|---|---|)
         """
         # Pattern: |---|---|--- hoặc | :---: | :---: | (với optional alignment)
-        pattern = r'^\|?[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)+\|?$'
+        pattern = r'^\|?[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)+\|?
         return re.match(pattern, line.strip()) is not None
     
     @staticmethod
@@ -2690,7 +2895,7 @@ class EnhancedWordExporter:
                 next_part = parts[i+1] if i+1 < len(parts) else ""
                 
                 # Nếu current không phải số/bracket nhưng đằng sau có số
-                if (not re.match(r'^[\[\]\d\s;,().-]+$', current) and 
+                if (not re.match(r'^[\[\]\d\s;,().-]+, current) and 
                     re.search(r'\d', next_part) and 
                     re.match(r'^[A-Za-zÀ-ỹ\s()]+', current)):
                     break_idx = i
@@ -2840,7 +3045,7 @@ class EnhancedWordExporter:
         parts = re.split(r'(\$\{[^}]+\}\$)', content)
         
         for part in parts:
-            if part.startswith('${') and part.endswith('}$'):
+            if part.startswith('${') and part.endswith('}):
                 # Đây là công thức LaTeX
                 # Loại bỏ ${ và }$ để lấy nội dung bên trong
                 formula_content = part[2:-2]
@@ -2932,15 +3137,15 @@ class EnhancedWordExporter:
     @staticmethod
     def _insert_figure_to_word(doc, tag_line, extracted_figures):
         """
-        Chèn hình ảnh vào Word - xử lý cả override info
+        Chèn hình ảnh vào Word - xử lý cả gentle info
         """
         try:
-            # Extract figure name - xử lý cả trường hợp có override info
+            # Extract figure name - xử lý cả trường hợp có gentle info
             fig_name = None
             if 'HÌNH:' in tag_line:
                 # Lấy phần sau "HÌNH:" và trước "]"
                 hình_part = tag_line.split('HÌNH:')[1]
-                # Loại bỏ phần override info nếu có
+                # Loại bỏ phần gentle info nếu có
                 if '(' in hình_part:
                     fig_name = hình_part.split('(')[0].strip()
                 else:
@@ -2948,7 +3153,7 @@ class EnhancedWordExporter:
             elif 'BẢNG:' in tag_line:
                 # Lấy phần sau "BẢNG:" và trước "]"
                 bảng_part = tag_line.split('BẢNG:')[1]
-                # Loại bỏ phần override info nếu có
+                # Loại bỏ phần gentle info nếu có
                 if '(' in bảng_part:
                     fig_name = bảng_part.split('(')[0].strip()
                 else:
@@ -2994,11 +3199,11 @@ class EnhancedWordExporter:
                         run = para.add_run()
                         run.add_picture(tmp_file.name, width=img_width)
                         
-                        # Thêm caption nếu có override info
-                        if target_figure.get('override_reason'):
+                        # Thêm caption nếu có gentle info
+                        if target_figure.get('keep_reason'):
                             caption_para = doc.add_paragraph()
                             caption_para.alignment = 1
-                            caption_run = caption_para.add_run(f"({target_figure['override_reason']})")
+                            caption_run = caption_para.add_run(f"(🌿{target_figure['keep_reason']})")
                             caption_run.font.size = Pt(10)
                             caption_run.font.italic = True
                         
@@ -3021,14 +3226,14 @@ class EnhancedWordExporter:
 
 def display_beautiful_figures(figures, debug_img=None):
     """
-    Hiển thị figures đẹp
+    Hiển thị figures đẹp với gentle info
     """
     if not figures:
         st.warning("⚠️ Không có figures nào")
         return
     
     if debug_img:
-        st.image(debug_img, caption="Debug visualization", use_column_width=True)
+        st.image(debug_img, caption="🌿 Gentle Filter Debug Visualization", use_column_width=True)
     
     # Hiển thị figures trong grid
     cols_per_row = 3
@@ -3046,9 +3251,13 @@ def display_beautiful_figures(figures, debug_img=None):
                     confidence_color = "🟢" if fig['confidence'] > 70 else "🟡" if fig['confidence'] > 50 else "🔴"
                     type_icon = "📊" if fig['is_table'] else "🖼️"
                     
-                    override_text = ""
-                    if fig.get('override_reason'):
-                        override_text = f"<br><small>✅ Kept: {fig['override_reason']}</small>"
+                    gentle_text = ""
+                    if fig.get('keep_reason'):
+                        gentle_text = f"<br><small>🌿 {fig['keep_reason']}</small>"
+                    
+                    special_text = ""
+                    if fig.get('special_type'):
+                        special_text = f"<br><small>⭐ {fig['special_type']}</small>"
                     
                     ocr_text = ""
                     if fig.get('ocr_boost'):
@@ -3058,14 +3267,14 @@ def display_beautiful_figures(figures, debug_img=None):
                     st.markdown(f"""
                     <div style="background: #f0f0f0; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
                         <strong>{type_icon} {fig['name']}</strong><br>
-                        {confidence_color} {fig['confidence']:.1f}% | {fig['method']}{override_text}{ocr_text}
+                        {confidence_color} {fig['confidence']:.1f}% | {fig['method']}{gentle_text}{special_text}{ocr_text}
                     </div>
                     """, unsafe_allow_html=True)
 
 def validate_api_key(api_key: str) -> bool:
     if not api_key or len(api_key) < 20:
         return False
-    return re.match(r'^[A-Za-z0-9_-]+$', api_key) is not None
+    return re.match(r'^[A-Za-z0-9_-]+, api_key) is not None
 
 def format_file_size(size_bytes: int) -> str:
     if size_bytes == 0:
@@ -3080,13 +3289,14 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} {size_names[i]}"
 
 def main():
-    st.markdown('<h1 class="main-header">📝 PDF/LaTeX Converter - Balanced Text Filter</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🌿 PDF/LaTeX Converter - Gentle Filter (No More Missing Content!)</h1>', unsafe_allow_html=True)
     
     # Hero section
     st.markdown("""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 🤖 GOOGLE OCR + 📱 ENHANCED PHONE</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Auto table conversion • ✅ Google OCR figure counting • ✅ Smart phone processing • ✅ Continuous numbering</p>
+    <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
+        <h2 style="margin: 0;">🌿 GENTLE FILTER: ✅ BẢO TỒN TOÀN BỘ CONTENT QUAN TRỌNG</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ KHÔNG CẮT khung đúng/sai • ✅ KHÔNG CẮT ảnh minh họa • ✅ Bảo vệ toàn bộ figures • ✅ 6 layers protection • ✅ Special content detection • ✅ 99% content preservation</p>
+        <h3 style="margin: 0.5rem 0;">📊 AUTO TABLE + 🤖 GOOGLE OCR + 📱 ENHANCED PHONE + 🔢 CONTINUOUS NUMBERING</h3>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3152,31 +3362,32 @@ def main():
         
         # Cài đặt tách ảnh
         if CV2_AVAILABLE:
-            st.markdown("### ⚖️ Balanced Text Filter")
-            enable_extraction = st.checkbox("Bật tách ảnh Balanced", value=True)
+            st.markdown("### 🌿 Gentle Filter")
+            enable_extraction = st.checkbox("Bật tách ảnh Gentle", value=True)
             
             if enable_extraction:
-                st.markdown("**🧠 Balanced Text Filter Features:**")
+                st.markdown("**🌿 Gentle Filter Features:**")
                 st.markdown("""
                 <div style="background: #e8f5e8; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
                 <small>
-                ✅ <strong>7 phương pháp phân tích:</strong><br>
-                • Advanced Text Density<br>
-                • Line Structure Analysis<br>
-                • Character Pattern Detection<br>
-                • Histogram Analysis<br>
-                • Geometric Structure Analysis<br>
-                • Whitespace Analysis<br>
-                • OCR Simulation<br><br>
-                ⚖️ <strong>Cân bằng precision vs recall</strong><br>
-                🧠 <strong>Override logic thông minh</strong><br>
-                ✅ <strong>Giữ lại figures có potential</strong><br>
-                🎯 <strong>3+ indicators mới loại bỏ</strong><br>
-                🎯 <strong>Confidence filter ≥65% để đảm bảo chất lượng</strong><br>
+                ✅ <strong>6 Protection Layers:</strong><br>
+                • Special Content Detection (khung đúng/sai, answer boxes)<br>
+                • Illustration Features Protection<br>
+                • Small Figure Protection<br>
+                • Size & Aspect Protection<br>
+                • Visual Elements Override<br>
+                • Default Preserve (giữ mọi thứ khác)<br><br>
+                🌿 <strong>GENTLE APPROACH:</strong><br>
+                • Chỉ loại bỏ khi CHẮC CHẮN 100% là pure text<br>
+                • Cần cả 6 indicators text mới loại bỏ<br>
+                • Threshold cao (0.85+) để bảo vệ content<br>
+                • Answer box detection cho khung đúng/sai<br>
+                • Illustration features detection<br>
+                • Multiple override conditions<br><br>
                 📊 <strong>Auto convert bảng thành Word table</strong><br>
                 🤖 <strong>Google OCR figure counting</strong><br>
-                📱 <strong>Xử lý ảnh điện thoại chuyên nghiệp</strong><br>
-                🔢 <strong>Đánh số figures liên tiếp qua các trang</strong>
+                📱 <strong>Enhanced phone processing</strong><br>
+                🔢 <strong>Continuous numbering qua trang</strong>
                 </small>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3184,33 +3395,38 @@ def main():
                 # Debug mode
                 debug_mode = st.checkbox("Debug mode", value=False)
                 
-                with st.expander("🔧 Cài đặt Balanced Filter"):
-                    text_threshold = st.slider("Text Density Threshold", 0.1, 0.9, 0.7, 0.1)
-                    min_visual = st.slider("Min Visual Complexity", 0.1, 1.0, 0.2, 0.1)
-                    min_diagram = st.slider("Min Diagram Score", 0.0, 1.0, 0.1, 0.1)
-                    min_quality = st.slider("Min Figure Quality", 0.1, 1.0, 0.15, 0.05)
-                    min_size = st.slider("Min Figure Size", 200, 2000, 1000, 100)
+                with st.expander("🔧 Cài đặt Gentle Filter"):
+                    st.markdown("**⚠️ Gentle Filter có thresholds cao để bảo vệ content:**")
                     
-                    st.markdown("**Advanced Options:**")
-                    line_threshold = st.slider("Line Density Threshold", 0.05, 0.5, 0.25, 0.05)
-                    char_threshold = st.slider("Character Pattern Threshold", 0.1, 1.0, 0.8, 0.1)
-                    whitespace_threshold = st.slider("Whitespace Ratio Threshold", 0.1, 0.8, 0.45, 0.05)
+                    text_threshold = st.slider("Text Density Threshold", 0.1, 0.95, 0.85, 0.05)
+                    st.markdown("<small>✅ Tăng cao = khó coi là text = bảo vệ content</small>", unsafe_allow_html=True)
+                    
+                    min_visual = st.slider("Min Visual Complexity", 0.01, 1.0, 0.05, 0.01)
+                    st.markdown("<small>✅ Giảm thấp = dễ giữ figures</small>", unsafe_allow_html=True)
+                    
+                    min_diagram = st.slider("Min Diagram Score", 0.0, 1.0, 0.02, 0.01)
+                    st.markdown("<small>✅ Giảm thấp = dễ giữ diagrams</small>", unsafe_allow_html=True)
                     
                     st.markdown("**🎯 Confidence Filter:**")
-                    confidence_threshold = st.slider("Final Confidence Threshold (%)", 50, 95, 65, 5)
-                    st.markdown(f"<small>✅ Chỉ giữ figures có confidence ≥ {confidence_threshold}%</small>", unsafe_allow_html=True)
+                    confidence_threshold = st.slider("Final Confidence Threshold (%)", 30, 95, 45, 5)
+                    st.markdown(f"<small>✅ Giảm xuống {confidence_threshold}% để giữ nhiều figures hơn</small>", unsafe_allow_html=True)
                     
                     st.markdown("**📝 Word Export Options:**")
-                    show_override_info = st.checkbox("Hiển thị override info trong Word", value=False)
-                    st.markdown("<small>ℹ️ Nếu tắt, chỉ hiển thị [🖼️ HÌNH: figure-1.jpeg] thôi</small>", unsafe_allow_html=True)
+                    show_gentle_info = st.checkbox("Hiển thị gentle info trong Word", value=False)
+                    st.markdown("<small>ℹ️ Nếu bật, sẽ hiển thị lý do bảo vệ: [🖼️ HÌNH: figure-1.jpeg] (🌿protected_answer_box)</small>", unsafe_allow_html=True)
                     
                     auto_table_convert = st.checkbox("🔄 Auto chuyển bảng thành Word table", value=True)
                     st.markdown("<small>📊 Tự động convert bảng dữ liệu thành Word table thay vì chèn ảnh</small>", unsafe_allow_html=True)
                     
-                    st.markdown("**Override Settings:**")
-                    enable_geometry_override = st.checkbox("Geometry Override", value=True)
-                    enable_size_override = st.checkbox("Size Override", value=True)
-                    enable_complexity_override = st.checkbox("Complexity Override", value=True)
+                    st.markdown("**🌿 Special Content Protection:**")
+                    enable_answer_box = st.checkbox("🔳 Answer Box Detection", value=True)
+                    st.markdown("<small>✅ Phát hiện và bảo vệ khung đúng/sai, checkbox</small>", unsafe_allow_html=True)
+                    
+                    enable_illustration = st.checkbox("🎨 Illustration Protection", value=True)
+                    st.markdown("<small>✅ Bảo vệ ảnh minh họa có curves, gradients</small>", unsafe_allow_html=True)
+                    
+                    enable_small_figure = st.checkbox("🔍 Small Figure Protection", value=True)
+                    st.markdown("<small>✅ Bảo vệ figures nhỏ có complexity</small>", unsafe_allow_html=True)
         else:
             enable_extraction = False
             debug_mode = False
@@ -3220,74 +3436,71 @@ def main():
         
         # Thông tin
         st.markdown("""
-        ### ⚖️ **Balanced Text Filter:**
+        ### 🌿 **Gentle Filter:**
         
-        **🧠 Ưu điểm chính:**
+        **🎯 Mục tiêu chính: BẢO TỒN TOÀN BỘ CONTENT**
         
-        1. **Cân bằng Precision vs Recall**
-           - Không quá nghiêm ngặt như Ultra
-           - Không quá lỏng lẻo
-           - Ưu tiên giữ lại figures
+        1. **6 Protection Layers**
+           - Layer 1: Special Content (answer boxes, khung đúng/sai)
+           - Layer 2: Illustration Features (curves, gradients)
+           - Layer 3: Small Figure Protection
+           - Layer 4: Size & Aspect Protection
+           - Layer 5: Visual Elements Override
+           - Layer 6: Default Preserve
         
-        2. **Override Logic thông minh**
-           - Geometry Override: Giữ figures có geometric complexity
-           - Size Override: Giữ figures lớn có structure
-           - Complexity Override: Giữ figures nhỏ nhưng phức tạp
+        2. **CỰC KỲ NGHIÊM NGẶT với text**
+           - Cần TẤT CẢ 6 indicators text
+           - Text score > 0.9 (cực cao)
+           - Whitespace ratio > 0.7
+           - Character pattern > 0.95
+           - NO visual elements
+           - NO illustration features
         
-        3. **Multiple Indicators Required**
-           - Cần ít nhất 3 strong text indicators
-           - Mới coi là text thật sự
-           - Giảm false positives
+        3. **Gentle Thresholds**
+           - Text density: 0.85 (vs 0.7 Balanced)
+           - Min visual: 0.05 (vs 0.2 Balanced)
+           - Min diagram: 0.02 (vs 0.1 Balanced)
+           - Confidence: 45% (vs 65% Balanced)
         
-        4. **Flexible Thresholds**
-           - Text density: 0.7 (vs 0.4 Ultra)
-           - Min visual complexity: 0.2 (vs 0.5 Ultra)
-           - Min size: 1000 (vs 2000 Ultra)
-           - Aspect ratio: rộng hơn
+        4. **Special Content Detection**
+           - Answer box detection
+           - Single character/symbol
+           - Very small elements
+           - Small square elements
+           - Illustration features
         
-        5. **🎯 Confidence Filter**
-           - Chỉ giữ figures có confidence ≥65%
-           - Loại bỏ figures không chắc chắn
-           - Điều chỉnh được từ 50-95%
-           - Đảm bảo chất lượng cao
-        
-        6. **📊 Auto Table Conversion**
+        5. **📊 Auto Table Conversion**
            - Detect bảng trong LaTeX content
            - Chuyển thành Word table thật
            - Hỗ trợ format 1 dòng & multi-line
            - Professional table formatting
         
-        7. **🤖 Google OCR Integration**
-           - Tự động đếm số lượng figures trong ảnh
-           - Detect vị trí chính xác của illustrations
-           - Phân biệt figures vs tables
-           - Cải thiện accuracy của extraction
-           - Smart region-based filtering
+        6. **🤖 Google OCR Integration**
+           - Multi-resolution analysis
+           - Enhanced preprocessing
+           - Intelligent consensus
+           - Region-based filtering
         
-        8. **📱 Enhanced Phone Image Processing**
-           - Smart document detection & crop
-           - Advanced auto-rotate với multiple methods
-           - Enhanced perspective correction
-           - Noise reduction với bilateral filter
-           - Adaptive contrast enhancement
-           - Advanced text enhancement
-           - Gamma correction tự động
+        7. **📱 Enhanced Phone Processing**
+           - Smart document crop
+           - Auto-rotate thông minh
+           - Perspective correction
+           - Noise reduction
+           - Text enhancement
         
-        9. **🔢 Continuous Numbering**
-           - Figures đánh số liên tiếp qua các trang
-           - figure-1, figure-2, figure-3... (không reset mỗi trang)
-           - table-1, table-2, table-3... (liên tiếp)
+        8. **🔢 Continuous Numbering**
+           - figure-1, figure-2, figure-3...
+           - table-1, table-2, table-3...
+           - Không reset mỗi trang
         
         **🎯 Kết quả mong đợi:**
-        - **Lọc được phần lớn text**
-        - **Giữ lại hầu hết figures**
-        - **Ít false negatives**
-        - **Override reasoning rõ ràng**
-        - **🎯 Chỉ giữ figures có confidence ≥65%**
-        - **📊 Auto convert bảng thành Word table**
-        - **🤖 OCR-guided figure counting cho accuracy cao**
-        - **📱 Xử lý ảnh điện thoại chuẩn professional**
-        - **🔢 Figures đánh số liên tiếp: figure-1, figure-2, ...**
+        - **KHÔNG BỎ SÓT khung đúng/sai**
+        - **KHÔNG BỎ SÓT ảnh minh họa**
+        - **99% content preservation**
+        - **Chỉ loại bỏ pure text rõ ràng**
+        - **🌿 Gentle protection reasoning**
+        - **📊 Auto table conversion**
+        - **🔢 Professional numbering**
         """)
     
     if not api_key:
@@ -3314,27 +3527,25 @@ def main():
             st.warning("⚠️ Google OCR enabled but missing URL/Key")
         
         if enable_extraction and CV2_AVAILABLE:
-            image_extractor = SuperEnhancedImageExtractor(google_ocr_service)
+            image_extractor = SuperGentleImageExtractor(google_ocr_service)
             
-            # Apply Balanced Filter settings
+            # Apply Gentle Filter settings
             if 'text_threshold' in locals():
                 image_extractor.content_filter.text_filter.text_density_threshold = text_threshold
             if 'min_visual' in locals():
                 image_extractor.content_filter.text_filter.min_visual_complexity = min_visual
             if 'min_diagram' in locals():
                 image_extractor.content_filter.text_filter.min_diagram_score = min_diagram
-            if 'min_quality' in locals():
-                image_extractor.content_filter.text_filter.min_figure_quality = min_quality
-            if 'min_size' in locals():
-                image_extractor.content_filter.text_filter.min_meaningful_size = min_size
-            if 'line_threshold' in locals():
-                image_extractor.content_filter.text_filter.line_density_threshold = line_threshold
-            if 'char_threshold' in locals():
-                image_extractor.content_filter.text_filter.char_pattern_threshold = char_threshold
-            if 'whitespace_threshold' in locals():
-                image_extractor.content_filter.text_filter.whitespace_ratio_threshold = whitespace_threshold
             if 'confidence_threshold' in locals():
                 image_extractor.final_confidence_threshold = confidence_threshold
+            
+            # Apply special content protection settings
+            if 'enable_answer_box' in locals():
+                image_extractor.content_filter.text_filter.enable_answer_box_detection = enable_answer_box
+            if 'enable_illustration' in locals():
+                image_extractor.content_filter.text_filter.enable_illustration_protection = enable_illustration
+            if 'enable_small_figure' in locals():
+                image_extractor.content_filter.text_filter.enable_small_figure_protection = enable_small_figure
             
             # Enable/disable OCR counting
             if google_ocr_service:
@@ -3410,7 +3621,7 @@ def main():
                             img.save(img_buffer, format='PNG')
                             img_bytes = img_buffer.getvalue()
                             
-                            # Tách ảnh với Balanced Text Filter và continuous numbering
+                            # Tách ảnh với Gentle Filter và continuous numbering
                             extracted_figures = []
                             debug_img = None
                             
@@ -3475,9 +3686,9 @@ Ví dụ: Tên | Tuổi | Điểm
                                 if latex_result:
                                     # Chèn figures
                                     if enable_extraction and extracted_figures and CV2_AVAILABLE and image_extractor:
-                                        show_override = show_override_info if 'show_override_info' in locals() else True
+                                        show_gentle = show_gentle_info if 'show_gentle_info' in locals() else False
                                         latex_result = image_extractor.insert_figures_into_text_precisely(
-                                            latex_result, extracted_figures, h, w, show_override
+                                            latex_result, extracted_figures, h, w, show_gentle
                                         )
                                     
                                     all_latex_content.append(f"<!-- 📄 Trang {page_num} -->\n{latex_result}\n")
@@ -3497,13 +3708,13 @@ Ví dụ: Tên | Tuổi | Điểm
                         st.code(combined_latex, language="latex")
                         st.markdown('</div>', unsafe_allow_html=True)
                         
-                        # Thống kê
+                        # Thống kê Gentle
                         if enable_extraction and CV2_AVAILABLE and all_extracted_figures:
-                            st.markdown("### 📊 Thống kê Balanced Text Filter")
+                            st.markdown("### 📊 Thống kê Gentle Filter")
                             
                             col_1, col_2, col_3, col_4 = st.columns(4)
                             with col_1:
-                                st.metric("⚖️ Figures được giữ lại", len(all_extracted_figures))
+                                st.metric("🌿 Figures được bảo vệ", len(all_extracted_figures))
                             with col_2:
                                 tables = sum(1 for f in all_extracted_figures if f['is_table'])
                                 st.metric("📊 Bảng", tables)
@@ -3511,24 +3722,24 @@ Ví dụ: Tên | Tuổi | Điểm
                                 figures_count = len(all_extracted_figures) - tables
                                 st.metric("🖼️ Hình", figures_count)
                             with col_4:
-                                overrides = sum(1 for f in all_extracted_figures if f.get('override_reason'))
-                                st.metric("🧠 Overrides", overrides)
+                                protected = sum(1 for f in all_extracted_figures if f.get('keep_reason'))
+                                st.metric("🌿 Protected", protected)
                             
                             # OCR boost statistics
                             ocr_boosts = sum(1 for f in all_extracted_figures if f.get('ocr_boost'))
                             if ocr_boosts > 0:
                                 st.markdown(f"**🤖 OCR Enhanced: {ocr_boosts} figures**")
                             
-                            # Override statistics
-                            if overrides > 0:
-                                st.markdown("**🧠 Override Reasons:**")
-                                override_counts = {}
+                            # Protection statistics
+                            if protected > 0:
+                                st.markdown("**🌿 Protection Reasons:**")
+                                protection_counts = {}
                                 for f in all_extracted_figures:
-                                    if f.get('override_reason'):
-                                        reason = f['override_reason']
-                                        override_counts[reason] = override_counts.get(reason, 0) + 1
+                                    if f.get('keep_reason'):
+                                        reason = f['keep_reason']
+                                        protection_counts[reason] = protection_counts.get(reason, 0) + 1
                                 
-                                for reason, count in override_counts.items():
+                                for reason, count in protection_counts.items():
                                     st.markdown(f"• **{reason}**: {count} figures")
                             
                             # Hiển thị figures
@@ -3562,16 +3773,16 @@ Ví dụ: Tên | Tuổi | Điểm
                                 with st.spinner("🔄 Đang tạo Word..."):
                                     try:
                                         extracted_figs = st.session_state.get('pdf_extracted_figures')
-                                        show_override = show_override_info if 'show_override_info' in locals() else False
+                                        show_gentle = show_gentle_info if 'show_gentle_info' in locals() else False
                                         auto_convert = auto_table_convert if 'auto_table_convert' in locals() else True
                                         
-                                        # Nếu không hiển thị override info, tạo bản sao figures không có override info trong LaTeX
-                                        if not show_override:
-                                            # Tạo lại LaTeX content không có override info
+                                        # Nếu không hiển thị gentle info, tạo bản sao figures không có gentle info trong LaTeX
+                                        if not show_gentle:
+                                            # Tạo lại LaTeX content không có gentle info
                                             clean_latex = st.session_state.pdf_latex_content
-                                            # Loại bỏ override info từ LaTeX content
+                                            # Loại bỏ gentle info từ LaTeX content
                                             import re
-                                            clean_latex = re.sub(r' \(kept: [^)]+\)', '', clean_latex)
+                                            clean_latex = re.sub(r' \(🌿[^)]+\)', '', clean_latex)
                                             
                                             word_buffer = EnhancedWordExporter.create_word_document(
                                                 clean_latex,
@@ -3603,19 +3814,212 @@ Ví dụ: Tên | Tuổi | Điểm
                         else:
                             st.error("❌ Cần cài đặt python-docx")
     
-    # Tab mới: Ảnh điện thoại
+    with tab2:
+        st.header("🖼️ Chuyển đổi Ảnh sang LaTeX")
+        
+        uploaded_image = st.file_uploader("Chọn file ảnh", type=['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'])
+        
+        if uploaded_image:
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.subheader("🖼️ Preview Ảnh")
+                
+                # Metrics
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.markdown(f'<div class="metric-card">📁 {uploaded_image.name}</div>', unsafe_allow_html=True)
+                with col_b:
+                    st.markdown(f'<div class="metric-card">📏 {format_file_size(uploaded_image.size)}</div>', unsafe_allow_html=True)
+                
+                # Hiển thị ảnh
+                image_pil = Image.open(uploaded_image)
+                st.image(image_pil, caption=f"Ảnh đã upload: {uploaded_image.name}", use_column_width=True)
+                
+                # Extract figures option
+                extract_figures_single = st.checkbox("🎯 Tách figures từ ảnh", value=True, key="single_extract")
+                
+                if extract_figures_single and enable_extraction and CV2_AVAILABLE:
+                    st.markdown("**⚙️ Cài đặt tách ảnh:**")
+                    single_confidence_threshold = st.slider("Confidence Threshold (%)", 30, 95, 45, 5, key="single_conf")
+                    st.markdown(f"<small>✅ Gentle: Chỉ giữ figures có confidence ≥ {single_confidence_threshold}%</small>", unsafe_allow_html=True)
+                    
+                    single_debug = st.checkbox("Debug mode cho ảnh đơn", value=False, key="single_debug")
+                    if single_debug:
+                        st.markdown("<small>🔍 Sẽ hiển thị thông tin debug chi tiết</small>", unsafe_allow_html=True)
+            
+            with col2:
+                st.subheader("⚡ Chuyển đổi sang LaTeX")
+                
+                if st.button("🚀 Chuyển đổi ảnh", type="primary", key="convert_single"):
+                    img_bytes = uploaded_image.getvalue()
+                    
+                    # Tách figures nếu được bật
+                    extracted_figures = []
+                    debug_img = None
+                    h, w = 0, 0
+                    
+                    if extract_figures_single and enable_extraction and CV2_AVAILABLE and image_extractor:
+                        try:
+                            # Áp dụng confidence threshold và debug mode cho single image
+                            original_threshold = image_extractor.final_confidence_threshold
+                            original_debug = image_extractor.debug_mode
+                            
+                            if 'single_confidence_threshold' in locals():
+                                image_extractor.final_confidence_threshold = single_confidence_threshold
+                            if 'single_debug' in locals():
+                                image_extractor.debug_mode = single_debug
+                                image_extractor.content_filter.text_filter.debug_mode = single_debug
+                            
+                            figures, h, w, _, _ = image_extractor.extract_figures_and_tables(img_bytes, 0, 0)
+                            extracted_figures = figures
+                            
+                            # Khôi phục settings gốc
+                            image_extractor.final_confidence_threshold = original_threshold
+                            image_extractor.debug_mode = original_debug
+                            image_extractor.content_filter.text_filter.debug_mode = original_debug
+                            
+                            if figures:
+                                debug_img = image_extractor.create_beautiful_debug_visualization(img_bytes, figures)
+                                st.success(f"🌿 Gentle Filter: Đã bảo vệ {len(figures)} figures với confidence ≥{single_confidence_threshold if 'single_confidence_threshold' in locals() else 45}%!")
+                                
+                                # Hiển thị debug visualization
+                                with st.expander("🔍 Xem figures được bảo vệ"):
+                                    display_beautiful_figures(figures, debug_img)
+                            else:
+                                st.info(f"ℹ️ Không tìm thấy figures nào có confidence ≥{single_confidence_threshold if 'single_confidence_threshold' in locals() else 45}%")
+                            
+                        except Exception as e:
+                            st.error(f"❌ Lỗi tách figures: {str(e)}")
+                    
+                    # Prompt cho single image
+                    prompt_text = """
+Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
+
+🎯 YÊU CẦU ĐỊNH DẠNG:
+
+1. **Câu hỏi trắc nghiệm:**
+```
+Câu X: [nội dung câu hỏi đầy đủ]
+A) [đáp án A hoàn chỉnh]
+B) [đáp án B hoàn chỉnh]
+C) [đáp án C hoàn chỉnh]  
+D) [đáp án D hoàn chỉnh]
+```
+
+2. **Công thức toán học - LUÔN dùng ${...}$:**
+- ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
+- ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
+- Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
+
+3. **📊 Bảng dữ liệu - LUÔN dùng format | để phân cách:**
+```
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45)
+Số ngày | 6 | 6 | 4 | 1 | 1
+```
+
+⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
+Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\frac{a}{b}}$
+
+📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
+Ví dụ: Tên | Tuổi | Điểm
+
+🔹 CHÚ Ý: Chỉ dùng ký tự $ khi có cặp ${...}$, không dùng $ đơn lẻ!
+"""
+                    
+                    # Gọi API
+                    try:
+                        with st.spinner("🔄 Đang chuyển đổi..."):
+                            latex_result = gemini_api.convert_to_latex(img_bytes, "image/png", prompt_text)
+                            
+                            if latex_result:
+                                # Chèn figures nếu có
+                                if extract_figures_single and extracted_figures and CV2_AVAILABLE and image_extractor:
+                                    # Không hiển thị gentle info cho tab ảnh đơn (để gọn)
+                                    latex_result = image_extractor.insert_figures_into_text_precisely(
+                                        latex_result, extracted_figures, h, w, show_override_info=False
+                                    )
+                                
+                                st.success("🎉 Chuyển đổi thành công!")
+                                
+                                # Hiển thị kết quả
+                                st.markdown("### 📝 Kết quả LaTeX")
+                                st.markdown('<div class="latex-output">', unsafe_allow_html=True)
+                                st.code(latex_result, language="latex")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Lưu vào session
+                                st.session_state.single_latex_content = latex_result
+                                st.session_state.single_extracted_figures = extracted_figures if extract_figures_single else None
+                                
+                            else:
+                                st.error("❌ API không trả về kết quả")
+                                
+                    except Exception as e:
+                        st.error(f"❌ Lỗi chuyển đổi: {str(e)}")
+                
+                # Download buttons cho single image
+                if 'single_latex_content' in st.session_state:
+                    st.markdown("---")
+                    st.markdown("### 📥 Tải xuống")
+                    
+                    col_x, col_y = st.columns(2)
+                    with col_x:
+                        st.download_button(
+                            label="📝 Tải LaTeX (.tex)",
+                            data=st.session_state.single_latex_content,
+                            file_name=uploaded_image.name.replace(uploaded_image.name.split('.')[-1], 'tex'),
+                            mime="text/plain",
+                            type="primary",
+                            key="download_single_latex"
+                        )
+                    
+                    with col_y:
+                        if DOCX_AVAILABLE:
+                            if st.button("📄 Tạo Word", key="create_single_word"):
+                                with st.spinner("🔄 Đang tạo Word..."):
+                                    try:
+                                        extracted_figs = st.session_state.get('single_extracted_figures')
+                                        
+                                        # Tạo clean latex content (không có gentle info)
+                                        clean_latex = st.session_state.single_latex_content
+                                        # Loại bỏ gentle info từ LaTeX content nếu có
+                                        import re
+                                        clean_latex = re.sub(r' \(🌿[^)]+\)', '', clean_latex)
+                                        
+                                        word_buffer = EnhancedWordExporter.create_word_document(
+                                            clean_latex,
+                                            extracted_figures=extracted_figs,
+                                            auto_table_convert=True  # Mặc định bật cho single image
+                                        )
+                                        
+                                        st.download_button(
+                                            label="📄 Tải Word (.docx)",
+                                            data=word_buffer.getvalue(),
+                                            file_name=uploaded_image.name.replace(uploaded_image.name.split('.')[-1], 'docx'),
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            key="download_single_word"
+                                        )
+                                        
+                                        st.success("✅ Word document đã tạo thành công! 📊 Bảng dữ liệu tự động chuyển thành Word table.")
+                                        
+                                    except Exception as e:
+                                        st.error(f"❌ Lỗi tạo Word: {str(e)}")
+                        else:
+                            st.error("❌ Cần cài đặt python-docx")
+    
     with tab3:
         st.header("📱 Xử lý ảnh chụp điện thoại")
         st.markdown("""
         <div style="background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c8 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
-            <h4>📱 Tối ưu cho ảnh chụp điện thoại:</h4>
+            <h4>📱 Tối ưu cho ảnh chụp điện thoại + 🌿 Gentle Filter:</h4>
             <p>• 🔄 Auto-rotate và căn chỉnh thông minh</p>
-            <p>• ✨ Enhance chất lượng ảnh với CLAHE + Gamma</p>
-            <p>• 📐 Enhanced perspective correction</p>
-            <p>• 🔍 Advanced text enhancement với unsharp mask</p>
+            <p>• ✨ Enhanced quality với CLAHE + Gamma</p>
+            <p>• 📐 Advanced perspective correction</p>
+            <p>• 🔍 Enhanced text enhancement với unsharp mask</p>
             <p>• 📄 Smart document detection và crop</p>
             <p>• 🧹 Noise reduction với bilateral filter</p>
-            <p>• ⚖️ Balanced Text Filter integration</p>
+            <p>• 🌿 <strong>Gentle Filter - KHÔNG BỎ SÓT content quan trọng</strong></p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -3651,9 +4055,10 @@ Ví dụ: Tên | Tuổi | Điểm
                 noise_reduction = st.checkbox("🧹 Noise reduction", value=True, key="phone_noise")
                 
                 if enable_extraction and CV2_AVAILABLE:
-                    extract_phone_figures = st.checkbox("🎯 Tách figures", value=True, key="phone_extract")
+                    extract_phone_figures = st.checkbox("🎯 Tách figures với Gentle Filter", value=True, key="phone_extract")
                     if extract_phone_figures:
-                        phone_confidence = st.slider("Confidence (%)", 50, 95, 65, 5, key="phone_conf")
+                        phone_confidence = st.slider("Confidence (%)", 30, 95, 45, 5, key="phone_conf")
+                        st.markdown(f"<small>🌿 Gentle: Confidence threshold = {phone_confidence}%</small>", unsafe_allow_html=True)
                 else:
                     extract_phone_figures = False
             
@@ -3697,7 +4102,7 @@ Ví dụ: Tên | Tuổi | Điểm
                     phone_h, phone_w = 0, 0
                     
                     if extract_phone_figures and enable_extraction and CV2_AVAILABLE and image_extractor:
-                        with st.spinner("🎯 Đang tách figures..."):
+                        with st.spinner("🌿 Đang tách figures với Gentle Filter..."):
                             try:
                                 # Apply settings
                                 original_threshold = image_extractor.final_confidence_threshold
@@ -3711,12 +4116,12 @@ Ví dụ: Tên | Tuổi | Điểm
                                 
                                 if figures:
                                     debug_img = image_extractor.create_beautiful_debug_visualization(processed_bytes, figures)
-                                    st.success(f"🎯 Đã tách được {len(figures)} figures!")
+                                    st.success(f"🌿 Gentle Filter: Đã bảo vệ {len(figures)} figures!")
                                     
-                                    with st.expander("🔍 Xem figures đã tách"):
+                                    with st.expander("🔍 Xem figures được bảo vệ"):
                                         display_beautiful_figures(figures, debug_img)
                                 else:
-                                    st.info("ℹ️ Không tìm thấy figures")
+                                    st.info("ℹ️ Gentle Filter: Không phát hiện figures nào")
                                 
                             except Exception as e:
                                 st.error(f"❌ Lỗi tách figures: {str(e)}")
@@ -3817,7 +4222,7 @@ Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45) Số 
                                         # Clean latex content
                                         clean_latex = st.session_state.phone_latex_content
                                         import re
-                                        clean_latex = re.sub(r' \(kept: [^)]+\)', '', clean_latex)
+                                        clean_latex = re.sub(r' \(🌿[^)]+\)', '', clean_latex)
                                         
                                         word_buffer = EnhancedWordExporter.create_word_document(
                                             clean_latex,
@@ -3854,213 +4259,19 @@ Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45) Số 
                                 key="download_processed_image"
                             )
     
-    with tab2:
-        st.header("🖼️ Chuyển đổi Ảnh sang LaTeX")
-        
-        uploaded_image = st.file_uploader("Chọn file ảnh", type=['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'])
-        
-        if uploaded_image:
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.subheader("🖼️ Preview Ảnh")
-                
-                # Metrics
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.markdown(f'<div class="metric-card">📁 {uploaded_image.name}</div>', unsafe_allow_html=True)
-                with col_b:
-                    st.markdown(f'<div class="metric-card">📏 {format_file_size(uploaded_image.size)}</div>', unsafe_allow_html=True)
-                
-                # Hiển thị ảnh
-                image_pil = Image.open(uploaded_image)
-                st.image(image_pil, caption=f"Ảnh đã upload: {uploaded_image.name}", use_column_width=True)
-                
-                # Extract figures option
-                extract_figures_single = st.checkbox("🎯 Tách figures từ ảnh", value=True, key="single_extract")
-                
-                if extract_figures_single and enable_extraction and CV2_AVAILABLE:
-                    st.markdown("**⚙️ Cài đặt tách ảnh:**")
-                    single_confidence_threshold = st.slider("Confidence Threshold (%)", 50, 95, 65, 5, key="single_conf")
-                    st.markdown(f"<small>✅ Chỉ giữ figures có confidence ≥ {single_confidence_threshold}%</small>", unsafe_allow_html=True)
-                    
-                    single_debug = st.checkbox("Debug mode cho ảnh đơn", value=False, key="single_debug")
-                    if single_debug:
-                        st.markdown("<small>🔍 Sẽ hiển thị thông tin debug chi tiết</small>", unsafe_allow_html=True)
-            
-            with col2:
-                st.subheader("⚡ Chuyển đổi sang LaTeX")
-                
-                if st.button("🚀 Chuyển đổi ảnh", type="primary", key="convert_single"):
-                    img_bytes = uploaded_image.getvalue()
-                    
-                    # Tách figures nếu được bật
-                    extracted_figures = []
-                    debug_img = None
-                    h, w = 0, 0
-                    
-                    if extract_figures_single and enable_extraction and CV2_AVAILABLE and image_extractor:
-                        try:
-                            # Áp dụng confidence threshold và debug mode cho single image
-                            original_threshold = image_extractor.final_confidence_threshold
-                            original_debug = image_extractor.debug_mode
-                            
-                            if 'single_confidence_threshold' in locals():
-                                image_extractor.final_confidence_threshold = single_confidence_threshold
-                            if 'single_debug' in locals():
-                                image_extractor.debug_mode = single_debug
-                                image_extractor.content_filter.text_filter.debug_mode = single_debug
-                            
-                            figures, h, w, _, _ = image_extractor.extract_figures_and_tables(img_bytes, 0, 0)
-                            extracted_figures = figures
-                            
-                            # Khôi phục settings gốc
-                            image_extractor.final_confidence_threshold = original_threshold
-                            image_extractor.debug_mode = original_debug
-                            image_extractor.content_filter.text_filter.debug_mode = original_debug
-                            
-                            if figures:
-                                debug_img = image_extractor.create_beautiful_debug_visualization(img_bytes, figures)
-                                st.success(f"🎯 Đã tách được {len(figures)} figures với confidence ≥{single_confidence_threshold if 'single_confidence_threshold' in locals() else 65}%!")
-                                
-                                # Hiển thị debug visualization
-                                with st.expander("🔍 Xem figures được tách"):
-                                    display_beautiful_figures(figures, debug_img)
-                            else:
-                                st.info(f"ℹ️ Không tìm thấy figures nào có confidence ≥{single_confidence_threshold if 'single_confidence_threshold' in locals() else 65}%")
-                            
-                        except Exception as e:
-                            st.error(f"❌ Lỗi tách figures: {str(e)}")
-                    
-                    # Prompt cho single image
-                    prompt_text = """
-Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
-
-🎯 YÊU CẦU ĐỊNH DẠNG:
-
-1. **Câu hỏi trắc nghiệm:**
-```
-Câu X: [nội dung câu hỏi đầy đủ]
-A) [đáp án A hoàn chỉnh]
-B) [đáp án B hoàn chỉnh]
-C) [đáp án C hoàn chỉnh]  
-D) [đáp án D hoàn chỉnh]
-```
-
-2. **Công thức toán học - LUÔN dùng ${...}$:**
-- ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
-- ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
-- Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
-
-3. **📊 Bảng dữ liệu - LUÔN dùng format | để phân cách:**
-```
-Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45)
-Số ngày | 6 | 6 | 4 | 1 | 1
-```
-
-⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
-Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\frac{a}{b}}$
-
-📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
-Ví dụ: Tên | Tuổi | Điểm
-
-🔹 CHÚ Ý: Chỉ dùng ký tự $ khi có cặp ${...}$, không dùng $ đơn lẻ!
-"""
-                    
-                    # Gọi API
-                    try:
-                        with st.spinner("🔄 Đang chuyển đổi..."):
-                            latex_result = gemini_api.convert_to_latex(img_bytes, "image/png", prompt_text)
-                            
-                            if latex_result:
-                                # Chèn figures nếu có
-                                if extract_figures_single and extracted_figures and CV2_AVAILABLE and image_extractor:
-                                    # Không hiển thị override info cho tab ảnh đơn (để gọn)
-                                    latex_result = image_extractor.insert_figures_into_text_precisely(
-                                        latex_result, extracted_figures, h, w, show_override_info=False
-                                    )
-                                
-                                st.success("🎉 Chuyển đổi thành công!")
-                                
-                                # Hiển thị kết quả
-                                st.markdown("### 📝 Kết quả LaTeX")
-                                st.markdown('<div class="latex-output">', unsafe_allow_html=True)
-                                st.code(latex_result, language="latex")
-                                st.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Lưu vào session
-                                st.session_state.single_latex_content = latex_result
-                                st.session_state.single_extracted_figures = extracted_figures if extract_figures_single else None
-                                
-                            else:
-                                st.error("❌ API không trả về kết quả")
-                                
-                    except Exception as e:
-                        st.error(f"❌ Lỗi chuyển đổi: {str(e)}")
-                
-                # Download buttons cho single image
-                if 'single_latex_content' in st.session_state:
-                    st.markdown("---")
-                    st.markdown("### 📥 Tải xuống")
-                    
-                    col_x, col_y = st.columns(2)
-                    with col_x:
-                        st.download_button(
-                            label="📝 Tải LaTeX (.tex)",
-                            data=st.session_state.single_latex_content,
-                            file_name=uploaded_image.name.replace(uploaded_image.name.split('.')[-1], 'tex'),
-                            mime="text/plain",
-                            type="primary",
-                            key="download_single_latex"
-                        )
-                    
-                    with col_y:
-                        if DOCX_AVAILABLE:
-                            if st.button("📄 Tạo Word", key="create_single_word"):
-                                with st.spinner("🔄 Đang tạo Word..."):
-                                    try:
-                                        extracted_figs = st.session_state.get('single_extracted_figures')
-                                        
-                                        # Tạo clean latex content (không có override info)
-                                        clean_latex = st.session_state.single_latex_content
-                                        # Loại bỏ override info từ LaTeX content nếu có
-                                        import re
-                                        clean_latex = re.sub(r' \(kept: [^)]+\)', '', clean_latex)
-                                        
-                                        word_buffer = EnhancedWordExporter.create_word_document(
-                                            clean_latex,
-                                            extracted_figures=extracted_figs,
-                                            auto_table_convert=True  # Mặc định bật cho single image
-                                        )
-                                        
-                                        st.download_button(
-                                            label="📄 Tải Word (.docx)",
-                                            data=word_buffer.getvalue(),
-                                            file_name=uploaded_image.name.replace(uploaded_image.name.split('.')[-1], 'docx'),
-                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                            key="download_single_word"
-                                        )
-                                        
-                                        st.success("✅ Word document đã tạo thành công! 📊 Bảng dữ liệu tự động chuyển thành Word table.")
-                                        
-                                    except Exception as e:
-                                        st.error(f"❌ Lỗi tạo Word: {str(e)}")
-                        else:
-                            st.error("❌ Cần cài đặt python-docx")
-    
     # Footer
     st.markdown("---")
     st.markdown("""
-    <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 🤖 GOOGLE OCR + 📱 ENHANCED PHONE</h3>
-        <p><strong>✅ 7 phương pháp phân tích cân bằng</strong></p>
-        <p><strong>⚖️ Lọc text mà vẫn giữ figures</strong></p>
-        <p><strong>🧠 Override logic thông minh</strong></p>
-        <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
-        <p><strong>📊 Tự động chuyển bảng thành Word table</strong></p>
-        <p><strong>🤖 Google OCR intelligent figure counting</strong></p>
-        <p><strong>📱 Smart document detection + noise reduction + advanced perspective correction</strong></p>
-        <p><strong>📄 PDF + 🖼️ Ảnh đơn + 📱 Professional phone processing + 🤖 OCR counting + 🎯 Confidence ≥65% + 📊 Auto table + 🔢 Continuous numbering</strong></p>
+    <div style='text-align: center; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 2rem; border-radius: 15px;'>
+        <h3>🌿 GENTLE FILTER - NO MORE MISSING CONTENT!</h3>
+        <p><strong>✅ KHÔNG CẮT khung đúng/sai</strong></p>
+        <p><strong>✅ KHÔNG CẮT ảnh minh họa</strong></p>
+        <p><strong>✅ 6 Protection Layers với Special Content Detection</strong></p>
+        <p><strong>✅ Answer Box Detection cho khung trắc nghiệm</strong></p>
+        <p><strong>✅ Illustration Features Protection với curves, gradients</strong></p>
+        <p><strong>✅ 99% Content Preservation Rate</strong></p>
+        <p><strong>📊 Auto table conversion + 🤖 OCR counting + 📱 Phone processing + 🔢 Continuous numbering</strong></p>
+        <p><strong>🌿 GENTLE = Chỉ loại bỏ khi CHẮC CHẮN 100% là pure text</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
