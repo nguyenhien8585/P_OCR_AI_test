@@ -2497,7 +2497,7 @@ Ví dụ: Tên | Tuổi | Điểm
                 if enable_extraction and CV2_AVAILABLE:
                     extract_phone_figures = st.checkbox("🎯 Tách figures", value=True, key="phone_extract")
                     if extract_phone_figures:
-                        phone_confidence = st.slider("Confidence (%)", 50, 95, 65, 5, key="phone_conf")
+                        phone_confidence = st.slider("Confidence (%)", 30, 95, 65, 5, key="phone_conf")
                 else:
                     extract_phone_figures = False
             
