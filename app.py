@@ -1871,8 +1871,6 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
     </div>
     """, unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()):
                 latex_run = para.add_run(part)
                 latex_run.font.name = 'Cambria Math'
                 latex_run.font.size = Pt(12)
