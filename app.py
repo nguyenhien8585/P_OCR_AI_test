@@ -1233,7 +1233,7 @@ class EnhancedWordExporter:
         parts = re.split(r'(\$\{[^}]+\}\$)', content)
         
         for part in parts:
-            if part.startswith('${') and part.endswith('}
+            if part.startswith('${') and part.endswith('}$')
     
     @staticmethod
     def _insert_figure_to_word(doc, tag_line, extracted_figures):
