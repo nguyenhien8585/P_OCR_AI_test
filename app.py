@@ -944,7 +944,8 @@ class SuperEnhancedImageExtractor:
             st.write(f"🎯 Confidence Filter: {len(high_confidence_candidates)}/{len(candidates)} figures above {self.final_confidence_threshold}%")
             if len(candidates) > len(high_confidence_candidates):
                 filtered_out = [c for c in candidates if c.get('final_confidence', 0) < self.final_confidence_threshold]
-                st.write(f"❌ Filtered out: {[f'conf={c.get(\"final_confidence\", 0):.1f}%' for c in filtered_out[:3]]}")
+                filtered_info = [f"conf={c.get('final_confidence', 0):.1f}%" for c in filtered_out[:3]]
+                st.write(f"❌ Filtered out: {filtered_info}")
         else:
             if len(candidates) > 0:
                 st.info(f"🎯 Confidence Filter: Giữ {len(high_confidence_candidates)}/{len(candidates)} figures có confidence ≥{self.final_confidence_threshold}%")
