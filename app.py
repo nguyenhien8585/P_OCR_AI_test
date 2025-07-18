@@ -664,12 +664,12 @@ class SuperEnhancedImageExtractor:
         # Debug mode
         self.debug_mode = False
     
-    def extract_figures_and_tables(self, image_bytes):
+    def extract_figures_and_tables(self, image_bytes, start_img_idx=0, start_table_idx=0):
         """
-        Tách ảnh với Balanced Text Filter
+        Tách ảnh với Balanced Text Filter và continuous numbering
         """
         if not CV2_AVAILABLE:
-            return [], 0, 0
+            return [], 0, 0, start_img_idx, start_table_idx
         
         try:
             # Đọc ảnh
@@ -707,14 +707,16 @@ class SuperEnhancedImageExtractor:
                 content_filtered = self.content_filter.analyze_content_and_filter(image_bytes, filtered_candidates)
                 filtered_candidates = content_filtered
             
-            # Tạo final figures
-            final_figures = self._create_final_figures(filtered_candidates, img, w, h)
+            # Tạo final figures với continuous numbering
+            final_figures, final_img_idx, final_table_idx = self._create_final_figures(
+                filtered_candidates, img, w, h, start_img_idx, start_table_idx
+            )
             
-            return final_figures, h, w
+            return final_figures, h, w, final_img_idx, final_table_idx
             
         except Exception as e:
             st.error(f"❌ Extraction error: {str(e)}")
-            return [], 0, 0
+            return [], 0, 0, start_img_idx, start_table_idx
     
     def _enhance_image(self, img):
         """
@@ -928,9 +930,9 @@ class SuperEnhancedImageExtractor:
         
         return min(100, confidence)
     
-    def _create_final_figures(self, candidates, img, w, h):
+    def _create_final_figures(self, candidates, img, w, h, start_img_idx=0, start_table_idx=0):
         """
-        Tạo final figures với confidence filter
+        Tạo final figures với confidence filter và continuous numbering
         """
         candidates = sorted(candidates, key=lambda x: (x['bbox'][1], x['bbox'][0]))
         
@@ -957,8 +959,8 @@ class SuperEnhancedImageExtractor:
                     st.info(f"ℹ️ Đã lọc bỏ {filtered_count} figures có confidence thấp")
         
         final_figures = []
-        img_idx = 0
-        table_idx = 0
+        img_idx = start_img_idx
+        table_idx = start_table_idx
         
         for candidate in high_confidence_candidates:
             cropped_img = self._smart_crop(img, candidate, w, h)
@@ -973,11 +975,11 @@ class SuperEnhancedImageExtractor:
             is_table = candidate.get('is_table', False) or candidate.get('method') == 'grid'
             
             if is_table:
-                name = f"table-{table_idx+1}.jpeg"
                 table_idx += 1
+                name = f"table-{table_idx}.jpeg"
             else:
-                name = f"figure-{img_idx+1}.jpeg"
                 img_idx += 1
+                name = f"figure-{img_idx}.jpeg"
             
             final_figures.append({
                 "name": name,
@@ -993,7 +995,7 @@ class SuperEnhancedImageExtractor:
                 "override_reason": candidate.get("override_reason", None)
             })
         
-        return final_figures
+        return final_figures, img_idx, table_idx
     
     def _smart_crop(self, img, candidate, img_w, img_h):
         """
@@ -1102,6 +1104,218 @@ class SuperEnhancedImageExtractor:
             draw.text((x + 5, y + 5), label, fill=color, stroke_width=2, stroke_fill='white')
         
         return img_pil
+
+class PhoneImageProcessor:
+    """
+    Xử lý ảnh chụp từ điện thoại để tối ưu cho OCR
+    """
+    
+    @staticmethod
+    def process_phone_image(image_bytes, auto_enhance=True, auto_rotate=True, 
+                          perspective_correct=True, text_enhance=True):
+        """
+        Xử lý ảnh điện thoại với các tùy chọn
+        """
+        try:
+            # Đọc ảnh
+            img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            
+            # Convert to numpy for CV2 processing if available
+            if CV2_AVAILABLE:
+                img = np.array(img_pil)
+                
+                # Auto rotate & straighten
+                if auto_rotate:
+                    img = PhoneImageProcessor._auto_rotate(img)
+                
+                # Perspective correction
+                if perspective_correct:
+                    img = PhoneImageProcessor._perspective_correction(img)
+                
+                # Auto enhance
+                if auto_enhance:
+                    img = PhoneImageProcessor._auto_enhance(img)
+                
+                # Text enhancement
+                if text_enhance:
+                    img = PhoneImageProcessor._enhance_text(img)
+                
+                # Convert back to PIL
+                processed_img = Image.fromarray(img)
+            else:
+                # Fallback: basic PIL processing
+                processed_img = img_pil
+                
+                if auto_enhance:
+                    # Basic enhancement with PIL
+                    from PIL import ImageEnhance
+                    enhancer = ImageEnhance.Contrast(processed_img)
+                    processed_img = enhancer.enhance(1.2)
+                    
+                    enhancer = ImageEnhance.Sharpness(processed_img)
+                    processed_img = enhancer.enhance(1.1)
+            
+            return processed_img
+            
+        except Exception as e:
+            st.error(f"❌ Lỗi xử lý ảnh: {str(e)}")
+            return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    
+    @staticmethod
+    def _auto_rotate(img):
+        """
+        Tự động xoay ảnh để text thẳng
+        """
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            
+            # Detect text orientation
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=100)
+            
+            if lines is not None:
+                angles = []
+                for rho, theta in lines[:10]:  # Take first 10 lines
+                    angle = theta * 180 / np.pi
+                    if angle > 90:
+                        angle = angle - 180
+                    angles.append(angle)
+                
+                if angles:
+                    # Get most common angle
+                    median_angle = np.median(angles)
+                    
+                    # Rotate if angle is significant
+                    if abs(median_angle) > 1:
+                        center = (img.shape[1]//2, img.shape[0]//2)
+                        M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
+                        img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), 
+                                           flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+            
+            return img
+            
+        except Exception:
+            return img
+    
+    @staticmethod
+    def _perspective_correction(img):
+        """
+        Sửa perspective distortion
+        """
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            
+            # Find document edges
+            edges = cv2.Canny(gray, 75, 200)
+            
+            # Find contours
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+            
+            # Find largest rectangular contour
+            for contour in contours[:5]:
+                peri = cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+                
+                if len(approx) == 4:
+                    # Check if it's a reasonable document shape
+                    area = cv2.contourArea(approx)
+                    img_area = img.shape[0] * img.shape[1]
+                    
+                    if area > img_area * 0.1:  # At least 10% of image
+                        # Order points
+                        pts = approx.reshape(4, 2)
+                        rect = PhoneImageProcessor._order_points(pts)
+                        
+                        # Calculate destination dimensions
+                        (tl, tr, br, bl) = rect
+                        
+                        widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+                        widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+                        maxWidth = max(int(widthA), int(widthB))
+                        
+                        heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+                        heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+                        maxHeight = max(int(heightA), int(heightB))
+                        
+                        # Destination points
+                        dst = np.array([
+                            [0, 0],
+                            [maxWidth - 1, 0],
+                            [maxWidth - 1, maxHeight - 1],
+                            [0, maxHeight - 1]], dtype="float32")
+                        
+                        # Perspective transform
+                        M = cv2.getPerspectiveTransform(rect, dst)
+                        img = cv2.warpPerspective(img, M, (maxWidth, maxHeight))
+                        break
+            
+            return img
+            
+        except Exception:
+            return img
+    
+    @staticmethod
+    def _order_points(pts):
+        """
+        Order points: top-left, top-right, bottom-right, bottom-left
+        """
+        rect = np.zeros((4, 2), dtype="float32")
+        
+        s = pts.sum(axis=1)
+        rect[0] = pts[np.argmin(s)]
+        rect[2] = pts[np.argmax(s)]
+        
+        diff = np.diff(pts, axis=1)
+        rect[1] = pts[np.argmin(diff)]
+        rect[3] = pts[np.argmax(diff)]
+        
+        return rect
+    
+    @staticmethod
+    def _auto_enhance(img):
+        """
+        Tự động tăng cường chất lượng ảnh
+        """
+        try:
+            # Convert to LAB color space
+            lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+            l, a, b = cv2.split(lab)
+            
+            # Apply CLAHE to L channel
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            l = clahe.apply(l)
+            
+            # Merge channels
+            enhanced = cv2.merge([l, a, b])
+            enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2RGB)
+            
+            return enhanced
+            
+        except Exception:
+            return img
+    
+    @staticmethod
+    def _enhance_text(img):
+        """
+        Tăng cường độ nét cho text
+        """
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            
+            # Gaussian blur
+            blurred = cv2.GaussianBlur(gray, (0, 0), 3)
+            
+            # Unsharp mask
+            unsharp_mask = cv2.addWeighted(gray, 1.5, blurred, -0.5, 0)
+            
+            # Convert back to RGB
+            enhanced = cv2.cvtColor(unsharp_mask, cv2.COLOR_GRAY2RGB)
+            
+            return enhanced
+            
+        except Exception:
+            return img
 
 class GeminiAPI:
     def __init__(self, api_key: str):
@@ -1295,7 +1509,7 @@ class EnhancedWordExporter:
     @staticmethod
     def _is_potential_table_header(line):
         """
-        Kiểm tra xem line có phải table header không
+        Kiểm tra xem line có phải table header không - hỗ trợ format 1 dòng
         """
         # Patterns cho table header
         patterns = [
@@ -1303,6 +1517,7 @@ class EnhancedWordExporter:
             r'.*\s+\|\s+.*\s+\|\s+.*',  # Có dấu | với spaces
             r'Thời gian.*\|.*Số.*',  # Specific patterns
             r'.*\[.*\).*\|.*',  # Interval notation with |
+            r'.*\|.*\d+.*\|.*\d+.*',  # Pattern có số
         ]
         
         for pattern in patterns:
@@ -1316,8 +1531,18 @@ class EnhancedWordExporter:
     @staticmethod
     def _parse_table_starting_at(lines, start_idx):
         """
-        Parse table bắt đầu từ start_idx
+        Parse table bắt đầu từ start_idx - hỗ trợ table 1 dòng
         """
+        if start_idx >= len(lines):
+            return None
+            
+        line = lines[start_idx].strip()
+        
+        # Kiểm tra xem có phải table format đặc biệt (2 rows trong 1 line) không
+        if EnhancedWordExporter._is_single_line_table(line):
+            return EnhancedWordExporter._parse_single_line_table(line)
+        
+        # Logic cũ cho multi-line table
         table_lines = []
         current_idx = start_idx
         
@@ -1348,6 +1573,53 @@ class EnhancedWordExporter:
             return EnhancedWordExporter._parse_table_data(table_lines)
         
         return None
+    
+    @staticmethod
+    def _is_single_line_table(line):
+        """
+        Kiểm tra xem có phải table format: Header | col1 | col2 | ... Data | val1 | val2 | ...
+        """
+        # Pattern: Thời gian (phút) | [20; 25) | [25; 30) | ... Số ngày | 6 | 6 | ...
+        
+        # Kiểm tra có ít nhất 6 dấu | (tối thiểu cho table 2x3)
+        if line.count('|') < 6:
+            return False
+        
+        # Kiểm tra pattern đặc biệt
+        patterns = [
+            r'.*\|.*\|.*\s+[A-Za-zÀ-ỹ\s]+\|.*\|.*',  # Header | data | data space NextHeader | data | data
+            r'[A-Za-zÀ-ỹ\s()]+\|.*\|.*\s+[A-Za-zÀ-ỹ\s]+\|.*',  # Vietnamese text pattern
+        ]
+        
+        for pattern in patterns:
+            if re.search(pattern, line, re.IGNORECASE):
+                return True
+        
+        return False
+    
+    @staticmethod
+    def _parse_single_line_table(line):
+        """
+        Parse table format: Header | col1 | col2 | ... Data | val1 | val2 | ...
+        """
+        try:
+            # Split thành các phần
+            parts = [part.strip() for part in line.split('|')]
+            parts = [part for part in parts if part]  # Remove empty
+            
+            if len(parts) < 6:  # Tối thiểu cần 6 phần
+                return None
+            
+            # Tìm break point giữa header row và data row
+            # Thường là từ có text (không phải số/bracket) đầu tiên sau một dãy số/bracket
+            break_idx = None
+            
+            for i in range(1, len(parts)-1):
+                current = parts[i]
+                next_part = parts[i+1] if i+1 < len(parts) else ""
+                
+                # Nếu current không phải số/bracket nhưng đằng sau có số
+                if (not re.match(r'^[\[\]\d\s;,().-]+
     
     @staticmethod
     def _is_table_row(line):
@@ -1709,8 +1981,8 @@ def main():
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE CONVERSION</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Cân bằng precision vs recall • ✅ Override logic thông minh • ✅ Auto convert bảng</p>
+        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE + 📱 PHONE IMAGE</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Auto table conversion • ✅ Phone image processing • ✅ Continuous numbering</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1752,7 +2024,9 @@ def main():
                 ✅ <strong>Giữ lại figures có potential</strong><br>
                 🎯 <strong>3+ indicators mới loại bỏ</strong><br>
                 🎯 <strong>Confidence filter ≥65% để đảm bảo chất lượng</strong><br>
-                📊 <strong>Auto convert bảng thành Word table</strong>
+                📊 <strong>Auto convert bảng thành Word table</strong><br>
+                📱 <strong>Xử lý ảnh điện thoại chuyên nghiệp</strong><br>
+                🔢 <strong>Đánh số figures liên tiếp qua các trang</strong>
                 </small>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1827,6 +2101,23 @@ def main():
            - Điều chỉnh được từ 50-95%
            - Đảm bảo chất lượng cao
         
+        6. **📊 Auto Table Conversion**
+           - Detect bảng trong LaTeX content
+           - Chuyển thành Word table thật
+           - Hỗ trợ format 1 dòng & multi-line
+           - Professional table formatting
+        
+        7. **📱 Phone Image Processing**
+           - Auto-rotate & straighten
+           - Perspective correction
+           - Enhance image quality
+           - Text clarity optimization
+        
+        8. **🔢 Continuous Numbering**
+           - Figures đánh số liên tiếp qua các trang
+           - figure-1, figure-2, figure-3... (không reset mỗi trang)
+           - table-1, table-2, table-3... (liên tiếp)
+        
         **🎯 Kết quả mong đợi:**
         - **Lọc được phần lớn text**
         - **Giữ lại hầu hết figures**
@@ -1834,6 +2125,8 @@ def main():
         - **Override reasoning rõ ràng**
         - **🎯 Chỉ giữ figures có confidence ≥65%**
         - **📊 Auto convert bảng thành Word table**
+        - **📱 Xử lý ảnh điện thoại tối ưu**
+        - **🔢 Figures đánh số liên tiếp: figure-1, figure-2, ...**
         """)
     
     if not api_key:
@@ -1881,7 +2174,7 @@ def main():
         return
     
     # Main content với tabs
-    tab1, tab2 = st.tabs(["📄 PDF sang LaTeX", "🖼️ Ảnh sang LaTeX"])
+    tab1, tab2, tab3 = st.tabs(["📄 PDF sang LaTeX", "🖼️ Ảnh sang LaTeX", "📱 Ảnh điện thoại"])
     
     with tab1:
         st.header("📄 Chuyển đổi PDF sang LaTeX")
@@ -1927,6 +2220,10 @@ def main():
                         all_extracted_figures = []
                         all_debug_images = []
                         
+                        # Continuous numbering across pages
+                        continuous_img_idx = 0
+                        continuous_table_idx = 0
+                        
                         progress_bar = st.progress(0)
                         
                         for i, (img, page_num) in enumerate(pdf_images):
@@ -1934,13 +2231,15 @@ def main():
                             img.save(img_buffer, format='PNG')
                             img_bytes = img_buffer.getvalue()
                             
-                            # Tách ảnh với Balanced Text Filter
+                            # Tách ảnh với Balanced Text Filter và continuous numbering
                             extracted_figures = []
                             debug_img = None
                             
                             if enable_extraction and CV2_AVAILABLE and image_extractor:
                                 try:
-                                    figures, h, w = image_extractor.extract_figures_and_tables(img_bytes)
+                                    figures, h, w, continuous_img_idx, continuous_table_idx = image_extractor.extract_figures_and_tables(
+                                        img_bytes, continuous_img_idx, continuous_table_idx
+                                    )
                                     extracted_figures = figures
                                     all_extracted_figures.extend(figures)
                                     
@@ -1971,10 +2270,14 @@ D) [đáp án D hoàn chỉnh]
 - ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
 - Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
 
-3. **📊 Bảng dữ liệu - LUÔN dùng format | để phân cách:**
+3. **📊 Bảng dữ liệu - Format linh hoạt:**
 ```
+Option 1 (Multi-line):
 Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45)
 Số ngày | 6 | 6 | 4 | 1 | 1
+
+Option 2 (Single-line):
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45) Số ngày | 6 | 6 | 4 | 1 | 1
 ```
 
 ⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
@@ -2116,6 +2419,248 @@ Ví dụ: Tên | Tuổi | Điểm
                         else:
                             st.error("❌ Cần cài đặt python-docx")
     
+    # Tab mới: Ảnh điện thoại
+    with tab3:
+        st.header("📱 Xử lý ảnh chụp điện thoại")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c8 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+            <h4>📱 Tối ưu cho ảnh chụp điện thoại:</h4>
+            <p>• 🔄 Auto-rotate và căn chỉnh</p>
+            <p>• ✨ Enhance chất lượng ảnh</p>
+            <p>• 📐 Perspective correction</p>
+            <p>• 🔍 Tăng độ nét văn bản</p>
+            <p>• ⚖️ Balanced Text Filter</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        uploaded_phone_image = st.file_uploader("Chọn ảnh chụp từ điện thoại", type=['png', 'jpg', 'jpeg'], key="phone_upload")
+        
+        if uploaded_phone_image:
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.subheader("📱 Ảnh gốc")
+                
+                # Hiển thị ảnh gốc
+                phone_image_pil = Image.open(uploaded_phone_image)
+                st.image(phone_image_pil, caption=f"Ảnh gốc: {uploaded_phone_image.name}", use_column_width=True)
+                
+                # Thông tin ảnh
+                st.markdown("**📊 Thông tin ảnh:**")
+                st.write(f"• Kích thước: {phone_image_pil.size[0]} x {phone_image_pil.size[1]}")
+                st.write(f"• Mode: {phone_image_pil.mode}")
+                st.write(f"• Dung lượng: {format_file_size(uploaded_phone_image.size)}")
+                
+                # Cài đặt xử lý
+                st.markdown("### ⚙️ Cài đặt xử lý")
+                
+                auto_enhance = st.checkbox("✨ Auto enhance chất lượng", value=True, key="phone_enhance")
+                auto_rotate = st.checkbox("🔄 Auto rotate & straighten", value=True, key="phone_rotate")
+                perspective_correct = st.checkbox("📐 Perspective correction", value=True, key="phone_perspective")
+                text_enhance = st.checkbox("🔍 Enhance text clarity", value=True, key="phone_text")
+                
+                if enable_extraction and CV2_AVAILABLE:
+                    extract_phone_figures = st.checkbox("🎯 Tách figures", value=True, key="phone_extract")
+                    if extract_phone_figures:
+                        phone_confidence = st.slider("Confidence (%)", 50, 95, 65, 5, key="phone_conf")
+                else:
+                    extract_phone_figures = False
+            
+            with col2:
+                st.subheader("🔄 Xử lý & Kết quả")
+                
+                if st.button("🚀 Xử lý ảnh điện thoại", type="primary", key="process_phone"):
+                    phone_img_bytes = uploaded_phone_image.getvalue()
+                    
+                    # Bước 1: Xử lý ảnh
+                    with st.spinner("🔄 Đang xử lý ảnh..."):
+                        try:
+                            processed_img = PhoneImageProcessor.process_phone_image(
+                                phone_img_bytes,
+                                auto_enhance=auto_enhance,
+                                auto_rotate=auto_rotate,
+                                perspective_correct=perspective_correct,
+                                text_enhance=text_enhance
+                            )
+                            
+                            st.success("✅ Xử lý ảnh thành công!")
+                            
+                            # Hiển thị ảnh đã xử lý
+                            st.markdown("**📸 Ảnh đã xử lý:**")
+                            st.image(processed_img, use_column_width=True)
+                            
+                            # Convert to bytes for further processing
+                            processed_buffer = io.BytesIO()
+                            processed_img.save(processed_buffer, format='PNG')
+                            processed_bytes = processed_buffer.getvalue()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Lỗi xử lý ảnh: {str(e)}")
+                            processed_bytes = phone_img_bytes
+                            processed_img = phone_image_pil
+                    
+                    # Bước 2: Tách figures nếu được bật
+                    phone_extracted_figures = []
+                    phone_h, phone_w = 0, 0
+                    
+                    if extract_phone_figures and enable_extraction and CV2_AVAILABLE and image_extractor:
+                        with st.spinner("🎯 Đang tách figures..."):
+                            try:
+                                # Apply settings
+                                original_threshold = image_extractor.final_confidence_threshold
+                                image_extractor.final_confidence_threshold = phone_confidence
+                                
+                                figures, phone_h, phone_w, _, _ = image_extractor.extract_figures_and_tables(processed_bytes, 0, 0)
+                                phone_extracted_figures = figures
+                                
+                                # Restore settings
+                                image_extractor.final_confidence_threshold = original_threshold
+                                
+                                if figures:
+                                    debug_img = image_extractor.create_beautiful_debug_visualization(processed_bytes, figures)
+                                    st.success(f"🎯 Đã tách được {len(figures)} figures!")
+                                    
+                                    with st.expander("🔍 Xem figures đã tách"):
+                                        display_beautiful_figures(figures, debug_img)
+                                else:
+                                    st.info("ℹ️ Không tìm thấy figures")
+                                
+                            except Exception as e:
+                                st.error(f"❌ Lỗi tách figures: {str(e)}")
+                    
+                    # Bước 3: Chuyển đổi text
+                    with st.spinner("📝 Đang chuyển đổi text..."):
+                        try:
+                            # Prompt với hướng dẫn cho ảnh điện thoại
+                            phone_prompt = """
+Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
+
+📱 ĐẶC BIỆT CHO ẢNH ĐIỆN THOẠI:
+- Ảnh có thể bị nghiêng, mờ, hoặc có perspective
+- Chú ý đọc kỹ từng ký tự, số
+- Bỏ qua noise, shadow, reflection
+
+🎯 YÊU CẦU ĐỊNH DẠNG:
+
+1. **Câu hỏi trắc nghiệm:**
+```
+Câu X: [nội dung câu hỏi đầy đủ]
+A) [đáp án A hoàn chỉnh]
+B) [đáp án B hoàn chỉnh]
+C) [đáp án C hoàn chỉnh]  
+D) [đáp án D hoàn chỉnh]
+```
+
+2. **Công thức toán học - LUÔN dùng ${...}$:**
+- ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
+- ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
+
+3. **📊 Bảng dữ liệu - Format linh hoạt:**
+```
+Option 1 (Multi-line):
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45)
+Số ngày | 6 | 6 | 4 | 1 | 1
+
+Option 2 (Single-line):
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45) Số ngày | 6 | 6 | 4 | 1 | 1
+```
+
+⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
+📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
+"""
+                            
+                            phone_latex_result = gemini_api.convert_to_latex(processed_bytes, "image/png", phone_prompt)
+                            
+                            if phone_latex_result:
+                                # Chèn figures nếu có
+                                if extract_phone_figures and phone_extracted_figures and CV2_AVAILABLE and image_extractor:
+                                    phone_latex_result = image_extractor.insert_figures_into_text_precisely(
+                                        phone_latex_result, phone_extracted_figures, phone_h, phone_w, show_override_info=False
+                                    )
+                                
+                                st.success("🎉 Chuyển đổi thành công!")
+                                
+                                # Hiển thị kết quả
+                                st.markdown("### 📝 Kết quả LaTeX")
+                                st.markdown('<div class="latex-output">', unsafe_allow_html=True)
+                                st.code(phone_latex_result, language="latex")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Lưu vào session
+                                st.session_state.phone_latex_content = phone_latex_result
+                                st.session_state.phone_extracted_figures = phone_extracted_figures if extract_phone_figures else None
+                                st.session_state.phone_processed_image = processed_img
+                                
+                            else:
+                                st.error("❌ API không trả về kết quả")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Lỗi chuyển đổi: {str(e)}")
+                
+                # Download buttons cho phone processing
+                if 'phone_latex_content' in st.session_state:
+                    st.markdown("---")
+                    st.markdown("### 📥 Tải xuống")
+                    
+                    col_x, col_y, col_z = st.columns(3)
+                    
+                    with col_x:
+                        st.download_button(
+                            label="📝 Tải LaTeX (.tex)",
+                            data=st.session_state.phone_latex_content,
+                            file_name=uploaded_phone_image.name.replace(uploaded_phone_image.name.split('.')[-1], 'tex'),
+                            mime="text/plain",
+                            type="primary",
+                            key="download_phone_latex"
+                        )
+                    
+                    with col_y:
+                        if DOCX_AVAILABLE:
+                            if st.button("📄 Tạo Word", key="create_phone_word"):
+                                with st.spinner("🔄 Đang tạo Word..."):
+                                    try:
+                                        extracted_figs = st.session_state.get('phone_extracted_figures')
+                                        
+                                        # Clean latex content
+                                        clean_latex = st.session_state.phone_latex_content
+                                        import re
+                                        clean_latex = re.sub(r' \(kept: [^)]+\)', '', clean_latex)
+                                        
+                                        word_buffer = EnhancedWordExporter.create_word_document(
+                                            clean_latex,
+                                            extracted_figures=extracted_figs,
+                                            auto_table_convert=True
+                                        )
+                                        
+                                        st.download_button(
+                                            label="📄 Tải Word (.docx)",
+                                            data=word_buffer.getvalue(),
+                                            file_name=uploaded_phone_image.name.replace(uploaded_phone_image.name.split('.')[-1], 'docx'),
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            key="download_phone_word"
+                                        )
+                                        
+                                        st.success("✅ Word document đã tạo thành công! 📊 Bảng tự động chuyển thành Word table.")
+                                        
+                                    except Exception as e:
+                                        st.error(f"❌ Lỗi tạo Word: {str(e)}")
+                        else:
+                            st.error("❌ Cần cài đặt python-docx")
+                    
+                    with col_z:
+                        if 'phone_processed_image' in st.session_state:
+                            # Tải ảnh đã xử lý
+                            processed_buffer = io.BytesIO()
+                            st.session_state.phone_processed_image.save(processed_buffer, format='PNG')
+                            
+                            st.download_button(
+                                label="📸 Tải ảnh đã xử lý",
+                                data=processed_buffer.getvalue(),
+                                file_name=uploaded_phone_image.name.replace(uploaded_phone_image.name.split('.')[-1], 'processed.png'),
+                                mime="image/png",
+                                key="download_processed_image"
+                            )
+    
     with tab2:
         st.header("🖼️ Chuyển đổi Ảnh sang LaTeX")
         
@@ -2173,7 +2718,7 @@ Ví dụ: Tên | Tuổi | Điểm
                                 image_extractor.debug_mode = single_debug
                                 image_extractor.content_filter.text_filter.debug_mode = single_debug
                             
-                            figures, h, w = image_extractor.extract_figures_and_tables(img_bytes)
+                            figures, h, w, _, _ = image_extractor.extract_figures_and_tables(img_bytes, 0, 0)
                             extracted_figures = figures
                             
                             # Khôi phục settings gốc
@@ -2322,7 +2867,7 @@ Ví dụ: Tên | Tuổi | Điểm
         <p><strong>🧠 Override logic thông minh</strong></p>
         <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
         <p><strong>📊 Tự động chuyển bảng thành Word table</strong></p>
-        <p><strong>📄 Hỗ trợ PDF + 🖼️ Hỗ trợ ảnh đơn lẻ + 🎯 Lọc confidence ≥65% + 📊 Auto table conversion</strong></p>
+        <p><strong>📄 PDF + 🖼️ Ảnh đơn + 📱 Ảnh điện thoại + 🎯 Lọc ≥65% + 📊 Auto table + 🔢 Đánh số liên tiếp</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
