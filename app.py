@@ -4278,11 +4278,6 @@ Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45) Số 
     </div>
     """, unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main(), part) for part in content.split('|')):
-                return True
-        
-        return False
     
     @staticmethod
     def _parse_table_starting_at(lines, start_idx):
