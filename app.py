@@ -1191,11 +1191,11 @@ class PDFProcessor:
 
 class EnhancedWordExporter:
     """
-    Xuất Word document sạch sẽ với xử lý LaTeX math chính xác
+    Xuất Word document sạch sẽ với xử lý LaTeX math chính xác và auto table conversion
     """
     
     @staticmethod
-    def create_word_document(latex_content: str, extracted_figures=None, images=None) -> io.BytesIO:
+    def create_word_document(latex_content: str, extracted_figures=None, images=None, auto_table_convert=True) -> io.BytesIO:
         try:
             doc = Document()
             
@@ -1206,6 +1206,11 @@ class EnhancedWordExporter:
             
             # Xử lý nội dung LaTeX
             lines = latex_content.split('\n')
+            
+            # Detect và parse tables trong content nếu được enable
+            table_data = []
+            if auto_table_convert:
+                table_data = EnhancedWordExporter._detect_and_parse_tables(latex_content)
             
             for line in lines:
                 line = line.strip()
@@ -1219,7 +1224,14 @@ class EnhancedWordExporter:
                 # Xử lý tags hình ảnh
                 if line.startswith('[') and line.endswith(']'):
                     if 'HÌNH:' in line or 'BẢNG:' in line:
-                        EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures)
+                        # Kiểm tra xem có phải là table figure và có data để convert không
+                        is_table_converted = False
+                        if auto_table_convert:
+                            is_table_converted = EnhancedWordExporter._try_insert_table_data(doc, line, table_data, extracted_figures)
+                        
+                        if not is_table_converted:
+                            # Fallback: chèn ảnh bình thường
+                            EnhancedWordExporter._insert_figure_to_word(doc, line, extracted_figures)
                         continue
                 
                 # Xử lý câu hỏi - đặt màu đen và in đậm
@@ -1229,6 +1241,10 @@ class EnhancedWordExporter:
                     for run in heading.runs:
                         run.font.color.rgb = RGBColor(0, 0, 0)  # Màu đen
                         run.font.bold = True
+                    continue
+                
+                # Skip table lines nếu đã được convert
+                if auto_table_convert and EnhancedWordExporter._is_table_line(line, table_data):
                     continue
                 
                 # Xử lý paragraph thường
@@ -1246,6 +1262,203 @@ class EnhancedWordExporter:
         except Exception as e:
             st.error(f"❌ Lỗi tạo Word: {str(e)}")
             raise e
+    
+    @staticmethod
+    def _detect_and_parse_tables(latex_content):
+        """
+        Detect và parse tables trong LaTeX content
+        """
+        tables = []
+        lines = latex_content.split('\n')
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Phát hiện table patterns
+            if EnhancedWordExporter._is_potential_table_header(line):
+                table_data = EnhancedWordExporter._parse_table_starting_at(lines, i)
+                if table_data:
+                    tables.append({
+                        'start_line': i,
+                        'data': table_data,
+                        'line_count': len(table_data)
+                    })
+                    i += len(table_data)
+                else:
+                    i += 1
+            else:
+                i += 1
+        
+        return tables
+    
+    @staticmethod
+    def _is_potential_table_header(line):
+        """
+        Kiểm tra xem line có phải table header không
+        """
+        # Patterns cho table header
+        patterns = [
+            r'.*\|.*\|.*',  # Có ít nhất 2 dấu |
+            r'.*\s+\|\s+.*\s+\|\s+.*',  # Có dấu | với spaces
+            r'Thời gian.*\|.*Số.*',  # Specific patterns
+            r'.*\[.*\).*\|.*',  # Interval notation with |
+        ]
+        
+        for pattern in patterns:
+            if re.search(pattern, line, re.IGNORECASE):
+                # Kiểm tra thêm: phải có ít nhất 2 cột
+                if line.count('|') >= 1:
+                    return True
+        
+        return False
+    
+    @staticmethod
+    def _parse_table_starting_at(lines, start_idx):
+        """
+        Parse table bắt đầu từ start_idx
+        """
+        table_lines = []
+        current_idx = start_idx
+        
+        # Lấy header
+        if current_idx < len(lines):
+            header_line = lines[current_idx].strip()
+            if header_line:
+                table_lines.append(header_line)
+                current_idx += 1
+        
+        # Lấy data rows
+        while current_idx < len(lines):
+            line = lines[current_idx].strip()
+            
+            if not line:
+                current_idx += 1
+                continue
+            
+            # Kiểm tra xem có phải table row không
+            if EnhancedWordExporter._is_table_row(line):
+                table_lines.append(line)
+                current_idx += 1
+            else:
+                break
+        
+        # Parse thành table data
+        if len(table_lines) >= 2:  # Ít nhất header + 1 row
+            return EnhancedWordExporter._parse_table_data(table_lines)
+        
+        return None
+    
+    @staticmethod
+    def _is_table_row(line):
+        """
+        Kiểm tra xem line có phải table row không
+        """
+        # Có ít nhất 1 dấu |
+        if '|' not in line:
+            return False
+        
+        # Không phải heading hay paragraph text thông thường
+        if re.match(r'^(câu|bài)\s+\d+', line.lower()):
+            return False
+        
+        # Có số hoặc data pattern
+        if re.search(r'\d+', line):
+            return True
+        
+        return False
+    
+    @staticmethod
+    def _parse_table_data(table_lines):
+        """
+        Parse table lines thành structured data
+        """
+        table_data = []
+        
+        for line in table_lines:
+            # Split bằng |
+            cells = [cell.strip() for cell in line.split('|')]
+            # Loại bỏ empty cells ở đầu/cuối
+            cells = [cell for cell in cells if cell]
+            
+            if cells:
+                table_data.append(cells)
+        
+        return table_data
+    
+    @staticmethod
+    def _try_insert_table_data(doc, tag_line, table_data, extracted_figures):
+        """
+        Thử chèn table data thay vì ảnh
+        """
+        # Chỉ convert nếu là BẢNG
+        if 'BẢNG:' not in tag_line:
+            return False
+        
+        # Tìm table data phù hợp gần với vị trí tag
+        if not table_data:
+            return False
+        
+        # Lấy table đầu tiên (có thể improve logic này)
+        selected_table = table_data[0] if table_data else None
+        
+        if not selected_table or not selected_table.get('data'):
+            return False
+        
+        try:
+            # Tạo Word table
+            table_rows = selected_table['data']
+            if len(table_rows) < 2:  # Cần ít nhất header + 1 row
+                return False
+            
+            # Tạo table trong Word
+            table = doc.add_table(rows=len(table_rows), cols=len(table_rows[0]))
+            table.style = 'Table Grid'
+            
+            # Fill data
+            for row_idx, row_data in enumerate(table_rows):
+                row = table.rows[row_idx]
+                for col_idx, cell_data in enumerate(row_data):
+                    if col_idx < len(row.cells):
+                        cell = row.cells[col_idx]
+                        cell.text = str(cell_data)
+                        
+                        # Format header row
+                        if row_idx == 0:
+                            for paragraph in cell.paragraphs:
+                                for run in paragraph.runs:
+                                    run.font.bold = True
+                                    run.font.color.rgb = RGBColor(0, 0, 0)
+                        
+                        # Center align
+                        for paragraph in cell.paragraphs:
+                            paragraph.alignment = 1  # Center
+            
+            # Thêm spacing
+            doc.add_paragraph()
+            
+            return True
+            
+        except Exception as e:
+            st.warning(f"⚠️ Không thể convert table: {str(e)}")
+            return False
+    
+    @staticmethod
+    def _is_table_line(line, table_data):
+        """
+        Kiểm tra xem line có thuộc table đã được convert không
+        """
+        if not table_data:
+            return False
+        
+        for table in table_data:
+            for row in table['data']:
+                # Reconstruct line từ row data
+                reconstructed = ' | '.join(row)
+                if line.replace(' ', '') == reconstructed.replace(' ', ''):
+                    return True
+        
+        return False
     
     @staticmethod
     def _process_latex_content(para, content):
@@ -1496,8 +1709,8 @@ def main():
     # Hero section
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER - LỌCTEXTMÀVẪNGIỮFIGURES</h2>
-        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Cân bằng precision vs recall • ✅ Override logic thông minh</p>
+        <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE CONVERSION</h2>
+        <p style="margin: 1rem 0; font-size: 1.1rem;">✅ 7 phương pháp phân tích • ✅ Cân bằng precision vs recall • ✅ Override logic thông minh • ✅ Auto convert bảng</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1538,7 +1751,8 @@ def main():
                 🧠 <strong>Override logic thông minh</strong><br>
                 ✅ <strong>Giữ lại figures có potential</strong><br>
                 🎯 <strong>3+ indicators mới loại bỏ</strong><br>
-                🎯 <strong>Confidence filter ≥65% để đảm bảo chất lượng</strong>
+                🎯 <strong>Confidence filter ≥65% để đảm bảo chất lượng</strong><br>
+                📊 <strong>Auto convert bảng thành Word table</strong>
                 </small>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1565,6 +1779,9 @@ def main():
                     st.markdown("**📝 Word Export Options:**")
                     show_override_info = st.checkbox("Hiển thị override info trong Word", value=False)
                     st.markdown("<small>ℹ️ Nếu tắt, chỉ hiển thị [🖼️ HÌNH: figure-1.jpeg] thôi</small>", unsafe_allow_html=True)
+                    
+                    auto_table_convert = st.checkbox("🔄 Auto chuyển bảng thành Word table", value=True)
+                    st.markdown("<small>📊 Tự động convert bảng dữ liệu thành Word table thay vì chèn ảnh</small>", unsafe_allow_html=True)
                     
                     st.markdown("**Override Settings:**")
                     enable_geometry_override = st.checkbox("Geometry Override", value=True)
@@ -1616,6 +1833,7 @@ def main():
         - **Ít false negatives**
         - **Override reasoning rõ ràng**
         - **🎯 Chỉ giữ figures có confidence ≥65%**
+        - **📊 Auto convert bảng thành Word table**
         """)
     
     if not api_key:
@@ -1753,8 +1971,17 @@ D) [đáp án D hoàn chỉnh]
 - ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
 - Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
 
+3. **📊 Bảng dữ liệu - LUÔN dùng format | để phân cách:**
+```
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45)
+Số ngày | 6 | 6 | 4 | 1 | 1
+```
+
 ⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
 Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\frac{a}{b}}$
+
+📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
+Ví dụ: Tên | Tuổi | Điểm
 
 🔹 CHÚ Ý: Chỉ dùng ký tự $ khi có cặp ${...}$, không dùng $ đơn lẻ!
 """
@@ -1849,6 +2076,7 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                     try:
                                         extracted_figs = st.session_state.get('pdf_extracted_figures')
                                         show_override = show_override_info if 'show_override_info' in locals() else False
+                                        auto_convert = auto_table_convert if 'auto_table_convert' in locals() else True
                                         
                                         # Nếu không hiển thị override info, tạo bản sao figures không có override info trong LaTeX
                                         if not show_override:
@@ -1860,12 +2088,14 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                             
                                             word_buffer = EnhancedWordExporter.create_word_document(
                                                 clean_latex,
-                                                extracted_figures=extracted_figs
+                                                extracted_figures=extracted_figs,
+                                                auto_table_convert=auto_convert
                                             )
                                         else:
                                             word_buffer = EnhancedWordExporter.create_word_document(
                                                 st.session_state.pdf_latex_content,
-                                                extracted_figures=extracted_figs
+                                                extracted_figures=extracted_figs,
+                                                auto_table_convert=auto_convert
                                             )
                                         
                                         st.download_button(
@@ -1876,7 +2106,10 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                             key="download_word"
                                         )
                                         
-                                        st.success("✅ Word document đã tạo thành công!")
+                                        success_msg = "✅ Word document đã tạo thành công!"
+                                        if auto_convert:
+                                            success_msg += " 📊 Bảng dữ liệu tự động chuyển thành Word table."
+                                        st.success(success_msg)
                                         
                                     except Exception as e:
                                         st.error(f"❌ Lỗi tạo Word: {str(e)}")
@@ -1981,8 +2214,17 @@ D) [đáp án D hoàn chỉnh]
 - ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
 - Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
 
+3. **📊 Bảng dữ liệu - LUÔN dùng format | để phân cách:**
+```
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45)
+Số ngày | 6 | 6 | 4 | 1 | 1
+```
+
 ⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
 Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\frac{a}{b}}$
+
+📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
+Ví dụ: Tên | Tuổi | Điểm
 
 🔹 CHÚ Ý: Chỉ dùng ký tự $ khi có cặp ${...}$, không dùng $ đơn lẻ!
 """
@@ -2049,7 +2291,8 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                         
                                         word_buffer = EnhancedWordExporter.create_word_document(
                                             clean_latex,
-                                            extracted_figures=extracted_figs
+                                            extracted_figures=extracted_figs,
+                                            auto_table_convert=True  # Mặc định bật cho single image
                                         )
                                         
                                         st.download_button(
@@ -2060,7 +2303,7 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                             key="download_single_word"
                                         )
                                         
-                                        st.success("✅ Word document đã tạo thành công!")
+                                        st.success("✅ Word document đã tạo thành công! 📊 Bảng dữ liệu tự động chuyển thành Word table.")
                                         
                                     except Exception as e:
                                         st.error(f"❌ Lỗi tạo Word: {str(e)}")
@@ -2073,12 +2316,13 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px;'>
-        <h3>⚖️ BALANCED TEXT FILTER - CÂN BẰNG PRECISION VS RECALL</h3>
+        <h3>⚖️ BALANCED TEXT FILTER + 📊 AUTO TABLE CONVERSION</h3>
         <p><strong>✅ 7 phương pháp phân tích cân bằng</strong></p>
         <p><strong>⚖️ Lọc text mà vẫn giữ figures</strong></p>
         <p><strong>🧠 Override logic thông minh</strong></p>
         <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
-        <p><strong>📄 Hỗ trợ PDF + 🖼️ Hỗ trợ ảnh đơn lẻ + 🎯 Lọc confidence ≥65%</strong></p>
+        <p><strong>📊 Tự động chuyển bảng thành Word table</strong></p>
+        <p><strong>📄 Hỗ trợ PDF + 🖼️ Hỗ trợ ảnh đơn lẻ + 🎯 Lọc confidence ≥65% + 📊 Auto table conversion</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
