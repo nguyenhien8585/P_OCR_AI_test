@@ -1613,9 +1613,12 @@ D) [đáp án D hoàn chỉnh]
                         st.write(f"• Kích thước: {image_pil.size[0]} x {image_pil.size[1]}")
                         st.write(f"• Mode: {image_pil.mode}")
                         
-                    except Exception as e:
-                        st.error(f"❌ Lỗi đọc ảnh: {str(e)}")
-                        continue
+                    for image in images:
+                        try:
+                            process_image(image)
+                        except Exception as e:
+                            st.error(f"❌ Lỗi đọc ảnh: {str(e)}")
+                            continue  # OK vì nằm trong vòng for
                     
                     # Extract figures option
                     extract_figures_single = st.checkbox("🎯 Tách figures từ ảnh", value=True)
