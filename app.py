@@ -585,7 +585,7 @@ class ContentBasedFigureFilter:
             # Balanced Text Filter
             if self.enable_balanced_filter:
                 filtered_candidates = self.text_filter.analyze_and_filter_balanced(image_bytes, candidates)
-                st.success(f"🧠 Balanced Text Filter: {len(filtered_candidates)}/{len(candidates)} figures (estimated: {estimated_count})")
+                st.success(f"🧠 Balanced Text Filter: {len(filtered_candidates)}/{len(candidates)} figures → confidence filter sẽ được áp dụng (estimated: {estimated_count})")
             else:
                 filtered_candidates = candidates
             
@@ -645,6 +645,7 @@ class SuperEnhancedImageExtractor:
         
         # Tham số confidence
         self.confidence_threshold = 15     # Giảm từ 30
+        self.final_confidence_threshold = 65  # Ngưỡng cuối cùng để lọc figures
         
         # Tham số morphology
         self.morph_kernel_size = 2
@@ -929,15 +930,27 @@ class SuperEnhancedImageExtractor:
     
     def _create_final_figures(self, candidates, img, w, h):
         """
-        Tạo final figures
+        Tạo final figures với confidence filter
         """
         candidates = sorted(candidates, key=lambda x: (x['bbox'][1], x['bbox'][0]))
+        
+        # Lọc theo final confidence threshold
+        high_confidence_candidates = []
+        for candidate in candidates:
+            if candidate.get('final_confidence', 0) >= self.final_confidence_threshold:
+                high_confidence_candidates.append(candidate)
+        
+        if self.debug_mode:
+            st.write(f"🎯 Confidence Filter: {len(high_confidence_candidates)}/{len(candidates)} figures above {self.final_confidence_threshold}%")
+        else:
+            if len(candidates) > 0:
+                st.info(f"🎯 Confidence Filter: Giữ {len(high_confidence_candidates)}/{len(candidates)} figures có confidence ≥{self.final_confidence_threshold}%")
         
         final_figures = []
         img_idx = 0
         table_idx = 0
         
-        for candidate in candidates:
+        for candidate in high_confidence_candidates:
             cropped_img = self._smart_crop(img, candidate, w, h)
             
             if cropped_img is None:
@@ -1480,7 +1493,8 @@ def main():
                 ⚖️ <strong>Cân bằng precision vs recall</strong><br>
                 🧠 <strong>Override logic thông minh</strong><br>
                 ✅ <strong>Giữ lại figures có potential</strong><br>
-                🎯 <strong>3+ indicators mới loại bỏ</strong>
+                🎯 <strong>3+ indicators mới loại bỏ</strong><br>
+                🎯 <strong>Confidence filter ≥65% để đảm bảo chất lượng</strong>
                 </small>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1499,6 +1513,10 @@ def main():
                     line_threshold = st.slider("Line Density Threshold", 0.05, 0.5, 0.25, 0.05)
                     char_threshold = st.slider("Character Pattern Threshold", 0.1, 1.0, 0.8, 0.1)
                     whitespace_threshold = st.slider("Whitespace Ratio Threshold", 0.1, 0.8, 0.45, 0.05)
+                    
+                    st.markdown("**🎯 Confidence Filter:**")
+                    confidence_threshold = st.slider("Final Confidence Threshold (%)", 50, 95, 65, 5)
+                    st.markdown(f"<small>✅ Chỉ giữ figures có confidence ≥ {confidence_threshold}%</small>", unsafe_allow_html=True)
                     
                     st.markdown("**Override Settings:**")
                     enable_geometry_override = st.checkbox("Geometry Override", value=True)
@@ -1538,11 +1556,18 @@ def main():
            - Min size: 1000 (vs 2000 Ultra)
            - Aspect ratio: rộng hơn
         
+        5. **🎯 Confidence Filter**
+           - Chỉ giữ figures có confidence ≥65%
+           - Loại bỏ figures không chắc chắn
+           - Điều chỉnh được từ 50-95%
+           - Đảm bảo chất lượng cao
+        
         **🎯 Kết quả mong đợi:**
         - **Lọc được phần lớn text**
         - **Giữ lại hầu hết figures**
         - **Ít false negatives**
         - **Override reasoning rõ ràng**
+        - **🎯 Chỉ giữ figures có confidence ≥65%**
         """)
     
     if not api_key:
@@ -1576,6 +1601,8 @@ def main():
                 image_extractor.content_filter.text_filter.char_pattern_threshold = char_threshold
             if 'whitespace_threshold' in locals():
                 image_extractor.content_filter.text_filter.whitespace_ratio_threshold = whitespace_threshold
+            if 'confidence_threshold' in locals():
+                image_extractor.final_confidence_threshold = confidence_threshold
             
             # Debug mode
             if debug_mode:
@@ -1587,8 +1614,8 @@ def main():
         st.error(f"❌ Lỗi khởi tạo: {str(e)}")
         return
     
-    # Main content với tabs - thêm tab mới
-    tab1, tab2, tab3 = st.tabs(["📄 PDF sang LaTeX", "🖼️ Ảnh sang LaTeX", "📷 Ảnh chuyển & chèn"])
+    # Main content với tabs
+    tab1, tab2 = st.tabs(["📄 PDF sang LaTeX", "🖼️ Ảnh sang LaTeX"])
     
     with tab1:
         st.header("📄 Chuyển đổi PDF sang LaTeX")
@@ -1946,194 +1973,7 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                         else:
                             st.error("❌ Cần cài đặt python-docx")
     
-    # Tab mới: Ảnh chuyển & chèn
-    with tab3:
-        st.header("📷 Ảnh chuyển đổi & chèn figures")
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
-            <h4>🎯 Tính năng đặc biệt:</h4>
-            <p>• 📄 Chuyển đổi văn bản thành LaTeX</p>
-            <p>• 🖼️ Tách và chèn figures tự động</p>
-            <p>• ⚖️ Sử dụng Balanced Text Filter</p>
-            <p>• 📝 Xuất Word với figures</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        uploaded_convert_image = st.file_uploader("Chọn ảnh để chuyển đổi & chèn", type=['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'], key="convert_insert")
-        
-        if uploaded_convert_image:
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.subheader("📷 Ảnh gốc")
-                
-                # Hiển thị ảnh
-                convert_image_pil = Image.open(uploaded_convert_image)
-                st.image(convert_image_pil, caption=f"Ảnh: {uploaded_convert_image.name}", use_column_width=True)
-                
-                # Cài đặt
-                st.markdown("### ⚙️ Cài đặt chuyển đổi")
-                
-                extract_and_insert = st.checkbox("🎯 Tách & chèn figures tự động", value=True, key="extract_insert")
-                
-                if extract_and_insert and enable_extraction:
-                    st.success("✅ Balanced Text Filter đã bật")
-                elif not enable_extraction:
-                    st.warning("⚠️ Cần bật Balanced Text Filter trong sidebar")
-                
-                # Cài đặt prompt
-                with st.expander("📝 Cài đặt prompt"):
-                    custom_prompt = st.text_area("Custom prompt (tùy chọn):", 
-                        placeholder="Để trống để sử dụng prompt mặc định...")
-            
-            with col2:
-                st.subheader("⚡ Xử lý & Kết quả")
-                
-                if st.button("🚀 Chuyển đổi & chèn figures", type="primary", key="convert_insert_btn"):
-                    convert_img_bytes = uploaded_convert_image.getvalue()
-                    
-                    # Bước 1: Tách figures
-                    extracted_convert_figures = []
-                    convert_debug_img = None
-                    convert_h, convert_w = 0, 0
-                    
-                    if extract_and_insert and enable_extraction and CV2_AVAILABLE and image_extractor:
-                        st.info("🔍 Bước 1: Tách figures...")
-                        try:
-                            convert_figures, convert_h, convert_w = image_extractor.extract_figures_and_tables(convert_img_bytes)
-                            extracted_convert_figures = convert_figures
-                            
-                            if convert_figures:
-                                convert_debug_img = image_extractor.create_beautiful_debug_visualization(convert_img_bytes, convert_figures)
-                                st.success(f"✅ Đã tách được {len(convert_figures)} figures!")
-                                
-                                # Hiển thị figures tách được
-                                with st.expander("🔍 Xem figures đã tách"):
-                                    display_beautiful_figures(convert_figures, convert_debug_img)
-                            else:
-                                st.info("ℹ️ Không tìm thấy figures nào")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Lỗi tách figures: {str(e)}")
-                    
-                    # Bước 2: Chuyển đổi văn bản
-                    st.info("📝 Bước 2: Chuyển đổi văn bản...")
-                    
-                    # Sử dụng custom prompt hoặc default
-                    if custom_prompt.strip():
-                        final_prompt = custom_prompt.strip()
-                    else:
-                        final_prompt = """
-Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
 
-🎯 YÊU CẦU ĐỊNH DẠNG:
-
-1. **Câu hỏi trắc nghiệm:**
-```
-Câu X: [nội dung câu hỏi đầy đủ]
-A) [đáp án A hoàn chỉnh]
-B) [đáp án B hoàn chỉnh]
-C) [đáp án C hoàn chỉnh]  
-D) [đáp án D hoàn chỉnh]
-```
-
-2. **Công thức toán học - LUÔN dùng ${...}$:**
-- ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
-- ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
-- Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
-
-⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
-Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\frac{a}{b}}$
-
-🔹 CHÚ Ý: Chỉ dùng ký tự $ khi có cặp ${...}$, không dùng $ đơn lẻ!
-"""
-                    
-                    # Gọi API
-                    try:
-                        convert_latex_result = gemini_api.convert_to_latex(convert_img_bytes, "image/png", final_prompt)
-                        
-                        if convert_latex_result:
-                            st.success("✅ Chuyển đổi văn bản thành công!")
-                            
-                            # Bước 3: Chèn figures
-                            if extract_and_insert and extracted_convert_figures and CV2_AVAILABLE and image_extractor:
-                                st.info("🖼️ Bước 3: Chèn figures...")
-                                convert_latex_result = image_extractor.insert_figures_into_text_precisely(
-                                    convert_latex_result, extracted_convert_figures, convert_h, convert_w
-                                )
-                                st.success("✅ Đã chèn figures vào văn bản!")
-                            
-                            # Hiển thị kết quả
-                            st.markdown("### 📝 Kết quả cuối cùng")
-                            st.markdown('<div class="latex-output">', unsafe_allow_html=True)
-                            st.code(convert_latex_result, language="latex")
-                            st.markdown('</div>', unsafe_allow_html=True)
-                            
-                            # Thống kê
-                            if extracted_convert_figures:
-                                st.markdown("### 📊 Thống kê")
-                                col_1, col_2, col_3 = st.columns(3)
-                                with col_1:
-                                    st.metric("🖼️ Figures", len(extracted_convert_figures))
-                                with col_2:
-                                    tables = sum(1 for f in extracted_convert_figures if f['is_table'])
-                                    st.metric("📊 Bảng", tables)
-                                with col_3:
-                                    figures_count = len(extracted_convert_figures) - tables
-                                    st.metric("🖼️ Hình", figures_count)
-                            
-                            # Lưu vào session
-                            st.session_state.convert_latex_content = convert_latex_result
-                            st.session_state.convert_extracted_figures = extracted_convert_figures if extract_and_insert else None
-                            
-                        else:
-                            st.error("❌ API không trả về kết quả")
-                            
-                    except Exception as e:
-                        st.error(f"❌ Lỗi chuyển đổi: {str(e)}")
-                
-                # Download buttons cho convert & insert
-                if 'convert_latex_content' in st.session_state:
-                    st.markdown("---")
-                    st.markdown("### 📥 Tải xuống")
-                    
-                    col_x, col_y = st.columns(2)
-                    with col_x:
-                        st.download_button(
-                            label="📝 Tải LaTeX (.tex)",
-                            data=st.session_state.convert_latex_content,
-                            file_name=uploaded_convert_image.name.replace(uploaded_convert_image.name.split('.')[-1], 'tex'),
-                            mime="text/plain",
-                            type="primary",
-                            key="download_convert_latex"
-                        )
-                    
-                    with col_y:
-                        if DOCX_AVAILABLE:
-                            if st.button("📄 Tạo Word với figures", key="create_convert_word"):
-                                with st.spinner("🔄 Đang tạo Word với figures..."):
-                                    try:
-                                        extracted_figs = st.session_state.get('convert_extracted_figures')
-                                        
-                                        word_buffer = EnhancedWordExporter.create_word_document(
-                                            st.session_state.convert_latex_content,
-                                            extracted_figures=extracted_figs
-                                        )
-                                        
-                                        st.download_button(
-                                            label="📄 Tải Word (.docx)",
-                                            data=word_buffer.getvalue(),
-                                            file_name=uploaded_convert_image.name.replace(uploaded_convert_image.name.split('.')[-1], 'docx'),
-                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                            key="download_convert_word"
-                                        )
-                                        
-                                        st.success("✅ Word document với figures đã tạo thành công!")
-                                        
-                                    except Exception as e:
-                                        st.error(f"❌ Lỗi tạo Word: {str(e)}")
-                        else:
-                            st.error("❌ Cần cài đặt python-docx")
     
     # Footer
     st.markdown("---")
@@ -2144,7 +1984,7 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
         <p><strong>⚖️ Lọc text mà vẫn giữ figures</strong></p>
         <p><strong>🧠 Override logic thông minh</strong></p>
         <p><strong>🎯 3+ indicators mới loại bỏ</strong></p>
-        <p><strong>📄 Hỗ trợ PDF + 🖼️ Hỗ trợ ảnh đơn lẻ + 📷 Hỗ trợ ảnh chuyển & chèn</strong></p>
+        <p><strong>📄 Hỗ trợ PDF + 🖼️ Hỗ trợ ảnh đơn lẻ + 🎯 Lọc confidence ≥65%</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
