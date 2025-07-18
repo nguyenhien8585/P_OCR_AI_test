@@ -33,7 +33,7 @@ except ImportError:
 
 # Cấu hình trang
 st.set_page_config(
-    page_title="PDF/LaTeX Converter - Enhanced Table Protection",
+    page_title="PDF/LaTeX Converter - Smart Figure Detection",
     page_icon="📝",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -61,326 +61,720 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     
-    .table-protection-alert {
+    .figure-container {
+        border: 3px solid #28a745;
+        border-radius: 12px;
+        margin: 15px 0;
+        padding: 10px;
+        background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    
+    .protection-alert {
         background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c8 100%);
         border: 2px solid #28a745;
         border-radius: 10px;
         padding: 1rem;
         margin: 1rem 0;
     }
-    
-    .processing-stats {
-        background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-        border: 1px solid #ffc107;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-class SuperEnhancedTableProtector:
-    """Siêu cải tiến bảo vệ bảng Đúng/Sai"""
+class SmartTableClassifier:
+    """Phân loại thông minh: Bảng Đúng/Sai vs Figures minh họa"""
     
     @staticmethod
-    def detect_true_false_tables(img):
-        """Phát hiện đặc biệt bảng Đúng/Sai"""
+    def classify_table_type(img_region):
+        """Phân loại loại bảng: content (Đúng/Sai) vs illustration (biến thiên, etc.)"""
+        try:
+            h, w = img_region.shape[:2] if len(img_region.shape) == 3 else img_region.shape
+            
+            # Detect True/False table characteristics
+            is_true_false = SmartTableClassifier._detect_true_false_pattern(img_region)
+            
+            # Detect illustration table characteristics  
+            is_illustration = SmartTableClassifier._detect_illustration_pattern(img_region)
+            
+            if is_true_false:
+                return "true_false_table"  # KHÔNG cắt
+            elif is_illustration:
+                return "illustration_table"  # CÓ THỂ cắt
+            else:
+                return "unknown_table"  # CÓ THỂ cắt
+                
+        except Exception:
+            return "unknown_table"
+    
+    @staticmethod
+    def _detect_true_false_pattern(img_region):
+        """Detect pattern của bảng Đúng/Sai"""
+        try:
+            h, w = img_region.shape[:2] if len(img_region.shape) == 3 else img_region.shape
+            
+            # Look for multiple rows with similar structure
+            gray = cv2.cvtColor(img_region, cv2.COLOR_RGB2GRAY) if len(img_region.shape) == 3 else img_region
+            
+            # Detect horizontal lines (rows)
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//10, 1))
+            horizontal_lines = cv2.morphologyEx(gray, cv2.MORPH_OPEN, horizontal_kernel)
+            
+            # Count horizontal line segments
+            contours, _ = cv2.findContours(horizontal_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            horizontal_count = len([c for c in contours if cv2.contourArea(c) > 100])
+            
+            # Detect small rectangular regions (checkboxes)
+            checkbox_count = SmartTableClassifier._count_checkbox_patterns(gray)
+            
+            # True/False tables typically have:
+            # - Multiple horizontal lines (3-10)
+            # - Multiple checkbox-like patterns (4-20)
+            # - Aspect ratio suggesting text rows
+            aspect_ratio = w / max(h, 1)
+            
+            is_true_false = (
+                3 <= horizontal_count <= 10 and 
+                checkbox_count >= 4 and
+                1.5 <= aspect_ratio <= 6.0  # Wide table with text
+            )
+            
+            return is_true_false
+            
+        except Exception:
+            return False
+    
+    @staticmethod
+    def _detect_illustration_pattern(img_region):
+        """Detect pattern của bảng minh họa (biến thiên, đồ thị, etc.)"""
+        try:
+            h, w = img_region.shape[:2] if len(img_region.shape) == 3 else img_region.shape
+            gray = cv2.cvtColor(img_region, cv2.COLOR_RGB2GRAY) if len(img_region.shape) == 3 else img_region
+            
+            # Look for mathematical symbols, arrows, graphs
+            # Detect curves and non-linear patterns
+            edges = cv2.Canny(gray, 30, 100)
+            
+            # Count non-rectangular contours (curves, arrows)
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            curved_count = 0
+            for contour in contours:
+                # Calculate contour complexity
+                epsilon = 0.02 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                
+                # More vertices = more complex shape = likely illustration
+                if len(approx) > 6:
+                    curved_count += 1
+            
+            # Mathematical illustration tables typically have:
+            # - Complex shapes (arrows, curves)
+            # - Less regular structure than True/False tables
+            # - May be more compact
+            
+            aspect_ratio = w / max(h, 1)
+            total_contours = len(contours)
+            curve_ratio = curved_count / max(total_contours, 1)
+            
+            is_illustration = (
+                curve_ratio > 0.3 or  # Many complex shapes
+                aspect_ratio < 1.2 or aspect_ratio > 8.0  # Very tall or very wide
+            )
+            
+            return is_illustration
+            
+        except Exception:
+            return False
+    
+    @staticmethod
+    def _count_checkbox_patterns(gray):
+        """Count checkbox-like rectangular patterns"""
+        try:
+            # Find small rectangular contours
+            contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            checkbox_count = 0
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+                area = w * h
+                aspect_ratio = w / max(h, 1)
+                
+                # Checkbox characteristics: small, roughly square
+                if (50 <= area <= 1000 and 0.5 <= aspect_ratio <= 2.0):
+                    checkbox_count += 1
+            
+            return checkbox_count
+            
+        except Exception:
+            return 0
+
+class SuperEnhancedImageExtractor:
+    """Tách ảnh thông minh: Chỉ cắt figures minh họa, bảo vệ bảng Đúng/Sai"""
+    
+    def __init__(self):
+        # Basic parameters
+        self.min_area_ratio = 0.001
+        self.min_area_abs = 500
+        self.min_width = 30
+        self.min_height = 30
+        self.max_figures = 20
+        self.max_area_ratio = 0.75
+        
+        # Confidence thresholds
+        self.confidence_threshold = 20
+        self.final_confidence_threshold = 60
+        
+        # Debug mode
+        self.debug_mode = False
+    
+    def extract_illustration_figures(self, image_bytes, start_img_idx=0, start_table_idx=0):
+        """Tách chỉ figures minh họa, bảo vệ bảng Đúng/Sai"""
+        if not CV2_AVAILABLE:
+            return [], 0, 0, start_img_idx, start_table_idx
+        
+        try:
+            if not image_bytes or len(image_bytes) == 0:
+                return [], 0, 0, start_img_idx, start_table_idx
+            
+            # Load and prepare image
+            img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            max_size = (2500, 2500)
+            if img_pil.size[0] > max_size[0] or img_pil.size[1] > max_size[1]:
+                img_pil.thumbnail(max_size, Image.Resampling.LANCZOS)
+            
+            img = np.array(img_pil)
+            h, w = img.shape[:2]
+            
+            if h == 0 or w == 0:
+                return [], 0, 0, start_img_idx, start_table_idx
+            
+            # Enhanced preprocessing
+            enhanced_img = self._enhance_image(img)
+            
+            # Multiple detection methods
+            all_candidates = []
+            
+            # Edge detection
+            try:
+                edge_candidates = self._detect_by_edges(enhanced_img, w, h)
+                all_candidates.extend(edge_candidates)
+            except Exception as e:
+                if self.debug_mode:
+                    st.warning(f"Edge detection error: {str(e)}")
+            
+            # Contour detection
+            try:
+                contour_candidates = self._detect_by_contours(enhanced_img, w, h)
+                all_candidates.extend(contour_candidates)
+            except Exception as e:
+                if self.debug_mode:
+                    st.warning(f"Contour detection error: {str(e)}")
+            
+            # Grid detection for tables/figures
+            try:
+                grid_candidates = self._detect_by_grid(enhanced_img, w, h)
+                all_candidates.extend(grid_candidates)
+            except Exception as e:
+                if self.debug_mode:
+                    st.warning(f"Grid detection error: {str(e)}")
+            
+            # Filter and classify candidates
+            filtered_candidates = self._filter_and_classify_candidates(all_candidates, img, w, h)
+            
+            # Create final figures (only illustrations)
+            final_figures, final_img_idx, final_table_idx = self._create_final_figures(
+                filtered_candidates, img, w, h, start_img_idx, start_table_idx
+            )
+            
+            return final_figures, h, w, final_img_idx, final_table_idx
+            
+        except Exception as e:
+            st.error(f"❌ Extraction error: {str(e)}")
+            return [], 0, 0, start_img_idx, start_table_idx
+    
+    def _enhance_image(self, img):
+        """Enhanced preprocessing"""
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(blurred)
+            return cv2.normalize(enhanced, None, 0, 255, cv2.NORM_MINMAX)
+        except Exception:
+            return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if len(img.shape) == 3 else img
+    
+    def _detect_by_edges(self, gray_img, w, h):
+        """Edge-based detection"""
+        try:
+            edges = cv2.Canny(gray_img, 30, 90)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            edges_dilated = cv2.dilate(edges, kernel, iterations=1)
+            
+            contours, _ = cv2.findContours(edges_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            candidates = []
+            for cnt in contours:
+                try:
+                    x, y, ww, hh = cv2.boundingRect(cnt)
+                    area = ww * hh
+                    
+                    if self._is_valid_candidate(x, y, ww, hh, area, w, h):
+                        candidates.append({
+                            'bbox': (x, y, ww, hh),
+                            'area': area,
+                            'method': 'edge',
+                            'confidence': 30
+                        })
+                except Exception:
+                    continue
+            
+            return candidates
+        except Exception:
+            return []
+    
+    def _detect_by_contours(self, gray_img, w, h):
+        """Contour-based detection"""
+        try:
+            _, binary = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+            
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            candidates = []
+            for cnt in contours:
+                try:
+                    x, y, ww, hh = cv2.boundingRect(cnt)
+                    area = ww * hh
+                    
+                    if self._is_valid_candidate(x, y, ww, hh, area, w, h):
+                        candidates.append({
+                            'bbox': (x, y, ww, hh),
+                            'area': area,
+                            'method': 'contour',
+                            'confidence': 35
+                        })
+                except Exception:
+                    continue
+            
+            return candidates
+        except Exception:
+            return []
+    
+    def _detect_by_grid(self, gray_img, w, h):
+        """Grid-based detection for tables and structured content"""
+        try:
+            # Horizontal lines
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//15, 1))
+            horizontal_lines = cv2.morphologyEx(gray_img, cv2.MORPH_OPEN, horizontal_kernel)
+            
+            # Vertical lines
+            vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//20))
+            vertical_lines = cv2.morphologyEx(gray_img, cv2.MORPH_OPEN, vertical_kernel)
+            
+            # Combine
+            grid_mask = cv2.bitwise_or(horizontal_lines, vertical_lines)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            grid_dilated = cv2.dilate(grid_mask, kernel, iterations=1)
+            
+            contours, _ = cv2.findContours(grid_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            candidates = []
+            for cnt in contours:
+                try:
+                    x, y, ww, hh = cv2.boundingRect(cnt)
+                    area = ww * hh
+                    
+                    if self._is_valid_candidate(x, y, ww, hh, area, w, h):
+                        aspect_ratio = ww / max(hh, 1)
+                        confidence = 40
+                        
+                        # Higher confidence for table-like structures
+                        if aspect_ratio > 1.5:
+                            confidence = 60
+                        
+                        candidates.append({
+                            'bbox': (x, y, ww, hh),
+                            'area': area,
+                            'method': 'grid',
+                            'confidence': confidence,
+                            'aspect_ratio': aspect_ratio
+                        })
+                except Exception:
+                    continue
+            
+            return candidates
+        except Exception:
+            return []
+    
+    def _is_valid_candidate(self, x, y, ww, hh, area, img_w, img_h):
+        """Validate candidate"""
+        try:
+            if x < 0 or y < 0 or ww <= 0 or hh <= 0:
+                return False
+            
+            if x + ww > img_w or y + hh > img_h:
+                return False
+            
+            area_ratio = area / max(img_w * img_h, 1)
+            
+            if (area < self.min_area_abs or 
+                area_ratio < self.min_area_ratio or 
+                area_ratio > self.max_area_ratio or
+                ww < self.min_width or 
+                hh < self.min_height):
+                return False
+            
+            # Avoid edge regions
+            edge_margin = 0.01
+            if (x < edge_margin * img_w or 
+                y < edge_margin * img_h or 
+                (x + ww) > (1 - edge_margin) * img_w or 
+                (y + hh) > (1 - edge_margin) * img_h):
+                return False
+            
+            return True
+        except Exception:
+            return False
+    
+    def _filter_and_classify_candidates(self, candidates, img, w, h):
+        """Filter and classify candidates using smart table classifier"""
+        try:
+            if not candidates:
+                return []
+            
+            # Remove overlapping candidates
+            candidates = sorted(candidates, key=lambda x: x.get('area', 0), reverse=True)
+            filtered = []
+            
+            for candidate in candidates:
+                try:
+                    if not self._is_overlapping_with_list(candidate, filtered):
+                        # Calculate confidence
+                        candidate['final_confidence'] = self._calculate_final_confidence(candidate, w, h)
+                        
+                        if candidate['final_confidence'] >= self.confidence_threshold:
+                            # Classify table type
+                            x, y, ww, hh = candidate['bbox']
+                            roi = img[y:y+hh, x:x+ww]
+                            table_type = SmartTableClassifier.classify_table_type(roi)
+                            
+                            candidate['table_type'] = table_type
+                            
+                            # Only keep illustration tables and unknown tables
+                            if table_type in ['illustration_table', 'unknown_table']:
+                                candidate['extractable'] = True
+                                filtered.append(candidate)
+                            else:
+                                # Mark as protected (True/False table)
+                                candidate['extractable'] = False
+                                candidate['protection_reason'] = 'True/False table - content protection'
+                                
+                                if self.debug_mode:
+                                    st.info(f"🛡️ Protected: True/False table detected")
+                
+                except Exception:
+                    continue
+            
+            return filtered[:self.max_figures]
+        except Exception:
+            return []
+    
+    def _is_overlapping_with_list(self, candidate, existing_list):
+        """Check overlap"""
+        try:
+            x1, y1, w1, h1 = candidate['bbox']
+            
+            for existing in existing_list:
+                x2, y2, w2, h2 = existing['bbox']
+                
+                intersection_area = max(0, min(x1+w1, x2+w2) - max(x1, x2)) * max(0, min(y1+h1, y2+h2) - max(y1, y2))
+                union_area = w1*h1 + w2*h2 - intersection_area
+                
+                if union_area > 0:
+                    iou = intersection_area / union_area
+                    if iou > 0.3:
+                        return True
+            
+            return False
+        except Exception:
+            return False
+    
+    def _calculate_final_confidence(self, candidate, w, h):
+        """Calculate final confidence"""
+        try:
+            x, y, ww, hh = candidate['bbox']
+            area_ratio = candidate['area'] / max(w * h, 1)
+            aspect_ratio = ww / max(hh, 1)
+            
+            confidence = candidate.get('confidence', 25)
+            
+            # Bonus for good size
+            if 0.01 < area_ratio < 0.6:
+                confidence += 25
+            elif 0.005 < area_ratio < 0.8:
+                confidence += 15
+            
+            # Bonus for reasonable aspect ratio
+            if 0.3 < aspect_ratio < 5.0:
+                confidence += 20
+            elif 0.2 < aspect_ratio < 8.0:
+                confidence += 10
+            
+            # Method bonus
+            if candidate['method'] == 'grid':
+                confidence += 20
+            elif candidate['method'] == 'edge':
+                confidence += 10
+            
+            return min(100, confidence)
+        except Exception:
+            return 25
+    
+    def _create_final_figures(self, candidates, img, w, h, start_img_idx=0, start_table_idx=0):
+        """Create final extractable figures"""
+        try:
+            # Filter by confidence
+            candidates = sorted(candidates, key=lambda x: (x['bbox'][1], x['bbox'][0]))
+            high_confidence = [c for c in candidates if c.get('final_confidence', 0) >= self.final_confidence_threshold]
+            
+            if self.debug_mode and len(candidates) > 0:
+                st.write(f"🎯 Confidence Filter: {len(high_confidence)}/{len(candidates)} figures above {self.final_confidence_threshold}%")
+            
+            final_figures = []
+            img_idx = start_img_idx
+            table_idx = start_table_idx
+            
+            for candidate in high_confidence:
+                try:
+                    if not candidate.get('extractable', True):
+                        continue
+                    
+                    cropped_img = self._smart_crop(img, candidate, w, h)
+                    if cropped_img is None:
+                        continue
+                    
+                    # Convert to base64
+                    buf = io.BytesIO()
+                    Image.fromarray(cropped_img).save(buf, format="JPEG", quality=95)
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                    
+                    # Determine type
+                    is_table = (candidate.get('method') == 'grid' or 
+                              candidate.get('table_type') == 'illustration_table')
+                    
+                    if is_table:
+                        table_idx += 1
+                        name = f"table-{table_idx}.jpeg"
+                    else:
+                        img_idx += 1
+                        name = f"figure-{img_idx}.jpeg"
+                    
+                    final_figures.append({
+                        "name": name,
+                        "base64": b64,
+                        "is_table": is_table,
+                        "bbox": candidate["bbox"],
+                        "confidence": candidate["final_confidence"],
+                        "table_type": candidate.get("table_type", "unknown"),
+                        "method": candidate["method"]
+                    })
+                    
+                except Exception as e:
+                    if self.debug_mode:
+                        st.warning(f"Error creating figure: {str(e)}")
+                    continue
+            
+            return final_figures, img_idx, table_idx
+        except Exception:
+            return [], start_img_idx, start_table_idx
+    
+    def _smart_crop(self, img, candidate, img_w, img_h):
+        """Smart cropping with padding"""
+        try:
+            x, y, w, h = candidate['bbox']
+            
+            if x < 0 or y < 0 or x + w > img_w or y + h > img_h:
+                return None
+            
+            # Add padding
+            padding = 15
+            padding_x = min(padding, w // 5)
+            padding_y = min(padding, h // 5)
+            
+            x0 = max(0, x - padding_x)
+            y0 = max(0, y - padding_y)
+            x1 = min(img_w, x + w + padding_x)
+            y1 = min(img_h, y + h + padding_y)
+            
+            cropped = img[y0:y1, x0:x1]
+            
+            if cropped.size == 0 or cropped.shape[0] == 0 or cropped.shape[1] == 0:
+                return None
+            
+            return cropped
+        except Exception:
+            return None
+    
+    def insert_figures_into_text(self, text, figures, img_h, img_w):
+        """Insert figures into text at appropriate positions"""
+        try:
+            if not figures:
+                return text
+            
+            lines = text.split('\n')
+            sorted_figures = sorted(figures, key=lambda f: f['bbox'][1])  # Sort by y position
+            
+            result_lines = lines[:]
+            offset = 0
+            
+            for i, figure in enumerate(sorted_figures):
+                try:
+                    # Calculate insertion position
+                    relative_y = figure['bbox'][1] / img_h
+                    insertion_line = int(relative_y * len(lines))
+                    insertion_line = max(0, min(insertion_line, len(lines) - 1))
+                    
+                    actual_insertion = insertion_line + offset
+                    if actual_insertion > len(result_lines):
+                        actual_insertion = len(result_lines)
+                    
+                    # Create figure tag
+                    if figure['is_table']:
+                        tag = f"[📊 BẢNG MINH HỌA: {figure['name']}]"
+                    else:
+                        tag = f"[🖼️ HÌNH MINH HỌA: {figure['name']}]"
+                    
+                    # Insert figure reference
+                    result_lines.insert(actual_insertion, "")
+                    result_lines.insert(actual_insertion + 1, tag)
+                    result_lines.insert(actual_insertion + 2, "")
+                    
+                    offset += 3
+                    
+                except Exception:
+                    continue
+            
+            return '\n'.join(result_lines)
+        except Exception:
+            return text
+
+class EnhancedPhoneImageProcessor:
+    """Enhanced processing cho ảnh điện thoại"""
+    
+    @staticmethod
+    def process_phone_image(image_bytes, preserve_tables=True, enhance_text=True, 
+                           auto_rotate=True, contrast_boost=1.2):
+        """Process phone image với bảo vệ bảng Đúng/Sai"""
+        try:
+            img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            
+            if CV2_AVAILABLE:
+                img = np.array(img_pil)
+                
+                # Detect True/False tables for protection
+                protected_regions = []
+                if preserve_tables:
+                    protected_regions = EnhancedPhoneImageProcessor._detect_protected_regions(img)
+                
+                # Apply gentle processing
+                if len(protected_regions) > 0:
+                    img = EnhancedPhoneImageProcessor._gentle_processing(img, protected_regions)
+                else:
+                    img = EnhancedPhoneImageProcessor._standard_processing(img, enhance_text, auto_rotate, contrast_boost)
+                
+                processed_img = Image.fromarray(img)
+            else:
+                # Fallback PIL processing
+                processed_img = img_pil
+                if enhance_text:
+                    enhancer = ImageEnhance.Contrast(processed_img)
+                    processed_img = enhancer.enhance(contrast_boost)
+            
+            return processed_img
+            
+        except Exception as e:
+            st.error(f"❌ Processing error: {str(e)}")
+            return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    
+    @staticmethod
+    def _detect_protected_regions(img):
+        """Detect regions that should be protected (True/False tables)"""
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if len(img.shape) == 3 else img
             h, w = gray.shape
             
-            # Detect text "Đúng" và "Sai"
-            text_regions = SuperEnhancedTableProtector._detect_text_regions(gray, ["Đúng", "Sai", "Mệnh đề"])
+            # Look for True/False table patterns
+            protected_regions = []
             
-            # Detect table structure
-            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//15, 1))
+            # Simple table detection
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w//12, 1))
             horizontal_lines = cv2.morphologyEx(gray, cv2.MORPH_OPEN, horizontal_kernel)
             
-            # Very sensitive vertical detection cho cột hẹp
-            vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h//30))
-            vertical_lines = cv2.morphologyEx(gray, cv2.MORPH_OPEN, vertical_kernel)
+            contours, _ = cv2.findContours(horizontal_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # Combine lines
-            table_mask = cv2.bitwise_or(horizontal_lines, vertical_lines)
-            
-            # Find table contours
-            contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            true_false_tables = []
             for contour in contours:
                 x, y, w_cont, h_cont = cv2.boundingRect(contour)
                 area = w_cont * h_cont
                 
-                # Check if this region contains "Đúng/Sai" structure
-                if area > (w * h * 0.02):  # At least 2% of image
-                    # Check for text presence
+                if area > (w * h * 0.02):  # Significant area
                     roi = gray[y:y+h_cont, x:x+w_cont]
-                    if SuperEnhancedTableProtector._contains_true_false_structure(roi):
-                        true_false_tables.append({
-                            'bbox': (x, y, w_cont, h_cont),
-                            'type': 'true_false_table',
-                            'protection_level': 'maximum'
-                        })
+                    table_type = SmartTableClassifier.classify_table_type(roi)
+                    
+                    if table_type == "true_false_table":
+                        protected_regions.append((x, y, w_cont, h_cont))
             
-            return true_false_tables
+            return protected_regions
             
         except Exception:
             return []
     
     @staticmethod
-    def _detect_text_regions(gray, keywords):
-        """Detect regions containing specific keywords"""
-        # Simple approach - could be enhanced with OCR
-        return []
-    
-    @staticmethod
-    def _contains_true_false_structure(roi):
-        """Check if ROI contains True/False table structure"""
+    def _gentle_processing(img, protected_regions):
+        """Gentle processing when True/False tables are present"""
         try:
-            h, w = roi.shape
-            if h < 50 or w < 100:
-                return False
-            
-            # Look for rectangular patterns (checkboxes)
-            contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            rectangular_count = 0
-            for contour in contours:
-                x, y, w_cont, h_cont = cv2.boundingRect(contour)
-                area = w_cont * h_cont
-                aspect_ratio = w_cont / max(h_cont, 1)
-                
-                # Check for square-like shapes (checkboxes)
-                if (50 < area < 500 and 0.5 < aspect_ratio < 2.0):
-                    rectangular_count += 1
-            
-            return rectangular_count >= 4  # At least 4 checkbox-like shapes
-            
-        except Exception:
-            return False
-
-class EnhancedPhoneImageProcessor:
-    """Enhanced Phone Image Processor với siêu bảo vệ bảng"""
-    
-    @staticmethod
-    def process_phone_image_with_super_table_protection(image_bytes, 
-                                                       preserve_tables=True, 
-                                                       enhance_text=True, 
-                                                       auto_rotate=True, 
-                                                       perspective_correct=True, 
-                                                       noise_reduction=True, 
-                                                       contrast_boost=1.2, 
-                                                       is_screenshot=False):
-        """Siêu xử lý với bảo vệ tối đa cho bảng Đúng/Sai"""
-        try:
-            # Load image
-            img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            
-            # Detect screenshot
-            if not is_screenshot:
-                is_screenshot = EnhancedPhoneImageProcessor._detect_screenshot(img_pil)
-            
-            # Convert to numpy
-            if CV2_AVAILABLE:
-                img = np.array(img_pil)
-                original_img = img.copy()
-                
-                # STEP 1: Detect True/False tables with maximum protection
-                protected_regions = []
-                true_false_tables = []
-                
-                if preserve_tables:
-                    true_false_tables = SuperEnhancedTableProtector.detect_true_false_tables(img)
-                    protected_regions.extend([table['bbox'] for table in true_false_tables])
-                    
-                    if true_false_tables:
-                        st.success(f"🛡️ **SUPER PROTECTION ACTIVE**: {len(true_false_tables)} True/False tables detected")
-                
-                # STEP 2: Apply processing based on protection level
-                if true_false_tables:
-                    # Maximum protection mode - minimal processing
-                    img = EnhancedPhoneImageProcessor._minimal_processing_for_tables(img, protected_regions)
-                else:
-                    # Standard processing
-                    if is_screenshot:
-                        img = EnhancedPhoneImageProcessor._process_screenshot(img, protected_regions)
-                    else:
-                        img = EnhancedPhoneImageProcessor._process_phone_photo(img, protected_regions, 
-                                                                             noise_reduction, auto_rotate, 
-                                                                             perspective_correct)
-                
-                # STEP 3: Text enhancement (always gentle for tables)
-                if enhance_text:
-                    img = EnhancedPhoneImageProcessor._super_gentle_text_enhancement(img, protected_regions, true_false_tables)
-                
-                # STEP 4: Final contrast (very careful)
-                img = EnhancedPhoneImageProcessor._careful_contrast_enhancement(img, contrast_boost, protected_regions)
-                
-                processed_img = Image.fromarray(img)
-                
-            else:
-                # Fallback: minimal PIL processing
-                processed_img = img_pil
-                if enhance_text and not preserve_tables:
-                    enhancer = ImageEnhance.Contrast(processed_img)
-                    processed_img = enhancer.enhance(1.1)  # Very gentle
-            
-            return processed_img, true_false_tables
-            
-        except Exception as e:
-            st.error(f"❌ Super processing error: {str(e)}")
-            return Image.open(io.BytesIO(image_bytes)).convert("RGB"), []
-    
-    @staticmethod
-    def _minimal_processing_for_tables(img, protected_regions):
-        """Minimal processing khi có bảng Đúng/Sai"""
-        try:
-            # Chỉ làm sạch noise rất nhẹ
-            img = cv2.bilateralFilter(img, 3, 30, 30)  # Very gentle
+            # Very minimal processing
+            img = cv2.bilateralFilter(img, 3, 30, 30)
             return img
         except Exception:
             return img
     
     @staticmethod
-    def _super_gentle_text_enhancement(img, protected_regions, true_false_tables):
-        """Siêu nhẹ nhàng cho text trong bảng"""
+    def _standard_processing(img, enhance_text, auto_rotate, contrast_boost):
+        """Standard processing when no protected content"""
         try:
-            # Convert to LAB
-            lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-            l, a, b = cv2.split(lab)
+            # Noise reduction
+            img = cv2.bilateralFilter(img, 5, 50, 50)
             
-            enhanced_l = l.copy()
-            
-            # For True/False tables - EXTREMELY gentle
-            for table in true_false_tables:
-                x, y, w, h = table['bbox']
-                table_region = l[y:y+h, x:x+w]
+            # Text enhancement
+            if enhance_text:
+                lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                l, a, b = cv2.split(lab)
                 
-                # Minimal CLAHE
-                clahe_minimal = cv2.createCLAHE(clipLimit=1.1, tileGridSize=(2, 2))
-                enhanced_table = clahe_minimal.apply(table_region)
-                enhanced_l[y:y+h, x:x+w] = enhanced_table
-            
-            # For other regions - gentle enhancement
-            mask = np.ones_like(l, dtype=np.uint8) * 255
-            for table in true_false_tables:
-                x, y, w, h = table['bbox']
-                mask[y:y+h, x:x+w] = 0
-            
-            clahe_normal = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
-            enhanced_normal = clahe_normal.apply(l)
-            enhanced_l = np.where(mask == 255, enhanced_normal, enhanced_l)
-            
-            # Merge back
-            enhanced_lab = cv2.merge([enhanced_l, a, b])
-            enhanced_img = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2RGB)
-            
-            return enhanced_img
-            
-        except Exception:
-            return img
-    
-    @staticmethod
-    def _careful_contrast_enhancement(img, contrast_boost, protected_regions):
-        """Careful contrast enhancement"""
-        try:
-            # Reduce contrast boost if tables present
-            if protected_regions:
-                contrast_boost = min(contrast_boost, 1.1)
-            
-            img_pil = Image.fromarray(img)
-            enhancer = ImageEnhance.Contrast(img_pil)
-            enhanced = enhancer.enhance(contrast_boost)
-            
-            return np.array(enhanced)
-        except Exception:
-            return img
-    
-    @staticmethod
-    def _detect_screenshot(img_pil):
-        """Detect screenshot với độ chính xác cao"""
-        try:
-            width, height = img_pil.size
-            aspect_ratio = width / height
-            
-            # Common screenshot ratios
-            common_ratios = [16/9, 16/10, 4/3, 3/2, 19.5/9, 18/9, 21/9]
-            
-            is_pixel_perfect = (width % 2 == 0) and (height % 2 == 0)
-            is_high_res = (width * height) > 300000
-            aspect_match = any(abs(aspect_ratio - ratio) < 0.05 for ratio in common_ratios)
-            
-            # Additional checks if CV2 available
-            if CV2_AVAILABLE:
-                img_array = np.array(img_pil)
-                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                l = clahe.apply(l)
                 
-                # Check for clean edges
-                edges = cv2.Canny(gray, 50, 150)
-                edge_density = np.sum(edges > 0) / (width * height)
-                has_clean_edges = 0.02 < edge_density < 0.15
-                
-                # Check for uniform text (screenshots often have more uniform text)
-                laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-                is_clean = laplacian_var > 50
-                
-                screenshot_score = sum([
-                    is_pixel_perfect,
-                    is_high_res,
-                    aspect_match,
-                    has_clean_edges,
-                    is_clean
-                ])
-                
-                return screenshot_score >= 3
-            else:
-                screenshot_score = sum([is_pixel_perfect, is_high_res, aspect_match])
-                return screenshot_score >= 2
-                
-        except Exception:
-            return False
-    
-    @staticmethod
-    def _process_screenshot(img, protected_regions):
-        """Process screenshot với table protection"""
-        try:
-            # Very minimal processing for screenshots
-            return img  # Screenshots are usually already clean
-        except Exception:
-            return img
-    
-    @staticmethod
-    def _process_phone_photo(img, protected_regions, noise_reduction, auto_rotate, perspective_correct):
-        """Process phone photo với table protection"""
-        try:
-            # Gentle noise reduction
-            if noise_reduction:
-                img = cv2.bilateralFilter(img, 5, 40, 40)
+                img = cv2.merge([l, a, b])
+                img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
             
-            # Skip rotation if many tables
-            if auto_rotate and len(protected_regions) <= 2:
-                img = EnhancedPhoneImageProcessor._gentle_auto_rotate(img, protected_regions)
-            
-            # Skip perspective correction if tables present
-            if perspective_correct and len(protected_regions) == 0:
-                img = EnhancedPhoneImageProcessor._gentle_perspective_correction(img)
+            # Gentle rotation if needed
+            if auto_rotate:
+                img = EnhancedPhoneImageProcessor._gentle_auto_rotate(img)
             
             return img
         except Exception:
             return img
     
     @staticmethod
-    def _gentle_auto_rotate(img, protected_regions):
+    def _gentle_auto_rotate(img):
         """Gentle auto rotation"""
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            edges = cv2.Canny(gray, 30, 100)
-            
+            edges = cv2.Canny(gray, 50, 150)
             lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=100)
             
             if lines is not None:
                 angles = []
-                for rho, theta in lines[:5]:  # Only use top 5 lines
+                for rho, theta in lines[:10]:
                     angle = theta * 180 / np.pi
                     if angle > 90:
                         angle = angle - 180
@@ -389,12 +783,12 @@ class EnhancedPhoneImageProcessor:
                     elif angle < -45:
                         angle = angle + 90
                     
-                    if abs(angle) < 15:  # Only small corrections
+                    if abs(angle) < 20:
                         angles.append(angle)
                 
                 if angles:
                     rotation_angle = np.median(angles)
-                    if abs(rotation_angle) > 1:  # Only rotate if significant
+                    if abs(rotation_angle) > 1:
                         center = (img.shape[1]//2, img.shape[0]//2)
                         M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
                         img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), 
@@ -404,12 +798,6 @@ class EnhancedPhoneImageProcessor:
             return img
         except Exception:
             return img
-    
-    @staticmethod
-    def _gentle_perspective_correction(img):
-        """Gentle perspective correction"""
-        # Implementation similar to original but more conservative
-        return img
 
 class GeminiAPI:
     def __init__(self, api_key: str):
@@ -431,7 +819,7 @@ class GeminiAPI:
             mime_type = "image/png"
         
         if len(content_data) > 20 * 1024 * 1024:
-            raise Exception("Image quá lớn (>20MB). Vui lòng resize ảnh.")
+            raise Exception("Image quá lớn (>20MB)")
         
         encoded_content = self.encode_image(content_data)
         
@@ -472,12 +860,12 @@ class GeminiAPI:
                         content = result['candidates'][0]['content']['parts'][0]['text']
                         return content.strip()
                     else:
-                        raise Exception("API không trả về kết quả hợp lệ")
+                        raise Exception("API không trả về kết quả")
                 elif response.status_code == 429:
                     if attempt < self.max_retries - 1:
                         time.sleep(2 ** attempt)
                         continue
-                    raise Exception("Đã vượt quá giới hạn rate limit")
+                    raise Exception("Rate limit exceeded")
                 else:
                     raise Exception(f"API Error {response.status_code}")
             
@@ -492,19 +880,63 @@ class GeminiAPI:
                     continue
                 raise Exception(str(e))
 
-def create_super_enhanced_table_prompt(is_screenshot=False, has_true_false_tables=False):
-    """Tạo prompt siêu cải tiến cho bảng Đúng/Sai"""
+class PDFProcessor:
+    @staticmethod
+    def extract_images_from_pdf(pdf_file, max_pages=None):
+        """Extract images from PDF with memory management"""
+        try:
+            file_content = pdf_file.read()
+            if len(file_content) == 0:
+                raise Exception("PDF file is empty")
+            
+            pdf_document = fitz.open(stream=file_content, filetype="pdf")
+            images = []
+            
+            total_pages = pdf_document.page_count
+            if max_pages:
+                total_pages = min(total_pages, max_pages)
+            
+            for page_num in range(total_pages):
+                try:
+                    page = pdf_document[page_num]
+                    # Convert to image
+                    mat = fitz.Matrix(2.0, 2.0)  # 2x zoom
+                    pix = page.get_pixmap(matrix=mat)
+                    img_data = pix.tobytes("png")
+                    pix = None
+                    
+                    img = Image.open(io.BytesIO(img_data))
+                    
+                    # Resize if too large
+                    max_size = (2000, 2000)
+                    if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
+                        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+                    
+                    images.append((img, page_num + 1))
+                    
+                    # Memory cleanup
+                    if page_num % 5 == 0:
+                        gc.collect()
+                        
+                except Exception as e:
+                    st.warning(f"Error processing page {page_num + 1}: {str(e)}")
+                    continue
+            
+            pdf_document.close()
+            return images
+            
+        except Exception as e:
+            raise Exception(f"PDF reading error: {str(e)}")
+
+def create_enhanced_prompt(has_illustrations=False):
+    """Create enhanced prompt for LaTeX conversion"""
     
     base_prompt = """
-🎯 CHUYỂN ĐỔI TOÀN BỘ NỘI DUNG THÀNH LATEX - BẢO VỆ TUYỆT ĐỐI BẢNG ĐÚNG/SAI
+🎯 CHUYỂN ĐỔI TOÀN BỘ NỘI DUNG THÀNH LATEX
 
-"""
-    
-    if has_true_false_tables:
-        base_prompt += """
-🚨 **PHÁT HIỆN BẢNG ĐÚNG/SAI - CHÍNH XÁC TUYỆT ĐỐI:**
+⚠️ **QUY TẮC QUAN TRỌNG:**
 
-1. **BẮT BUỘC giữ nguyên format bảng:**
+1. **Bảng Đúng/Sai - TUYỆT ĐỐI KHÔNG CẮT:**
 ```
 | Mệnh đề | Đúng | Sai |
 |---------|------|-----|
@@ -514,46 +946,13 @@ def create_super_enhanced_table_prompt(is_screenshot=False, has_true_false_table
 | (d) Giá trị lớn nhất của hàm số ${f(x)}$ trên đoạn ${[-3;3]}$ bằng 24 | ☐ | ☐ |
 ```
 
-2. **TUYỆT ĐỐI KHÔNG được:**
-- Cắt hoặc bỏ cột Đúng/Sai
-- Gộp các cột
-- Thay đổi ký hiệu checkbox ☐
-- Bỏ qua bất kỳ mệnh đề nào
-
-3. **BẮT BUỘC sử dụng:**
-- | để phân cách cột
-- ☐ cho checkbox trống
-- ${...}$ cho MỌI công thức toán học
-
-"""
-    
-    if is_screenshot:
-        base_prompt += """
-📺 **ẢNH SCREENSHOT - CHẤT LƯỢNG CAO:**
-- Đọc chính xác từng ký tự
-- Bảo toàn hoàn toàn cấu trúc bảng
-- Không bỏ sót bất kỳ thông tin nào
-
-"""
-    else:
-        base_prompt += """
-📱 **ẢNH ĐIỆN THOẠI - ĐÃ ĐƯỢC XỬ LÝ:**
-- Ảnh đã được tối ưu hóa
-- Đọc cẩn thận mọi chi tiết
-- Chú ý đặc biệt đến vùng bảng
-
-"""
-    
-    base_prompt += """
-🎯 **QUY TẮC CHUYỂN ĐỔI:**
-
-**Công thức toán học:**
+2. **Công thức toán học - LUÔN dùng ${...}$:**
 - ${x^2 + y^2 = z^2}$
 - ${\\frac{a+b}{c-d}}$
 - ${\\sqrt{x+1}}$
 - ${f'(x) = 3x^2 - 12}$
 
-**Câu hỏi trắc nghiệm:**
+3. **Câu hỏi trắc nghiệm:**
 ```
 Câu X: [nội dung câu hỏi]
 A) [đáp án A]
@@ -562,22 +961,63 @@ C) [đáp án C]
 D) [đáp án D]
 ```
 
-**Bảng biến thiên:**
-```
-| x | ${-\\infty}$ | -2 | ${+\\infty}$ |
-|---|-------------|-----|-------------|
-| ${f'(x)}$ | + | 0 | - |
-| ${f(x)}$ | ↗ | max | ↘ |
-```
+"""
+    
+    if has_illustrations:
+        base_prompt += """
+4. **Figures minh họa đã được tách riêng:**
+- Các bảng biến thiên, đồ thị, hình vẽ minh họa sẽ được chèn tự động
+- Tập trung vào text content chính
+- Không cần mô tả chi tiết các hình minh họa
 
-⚠️ **SIÊU QUAN TRỌNG:**
-- TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức!
-- TUYỆT ĐỐI giữ nguyên cấu trúc bảng Đúng/Sai!
-- TUYỆT ĐỐI không cắt hoặc bỏ cột nào!
+"""
+    
+    base_prompt += """
+🚨 **TUYỆT ĐỐI:**
+- Dùng ${...}$ cho MỌI công thức toán học!
+- Giữ nguyên cấu trúc bảng Đúng/Sai!
+- Không cắt hoặc bỏ cột nào trong bảng!
 - Dùng ☐ cho checkbox trống!
+- Dùng | để phân cách cột trong bảng!
 """
     
     return base_prompt
+
+def display_figures(figures):
+    """Display extracted figures in a nice grid"""
+    if not figures:
+        st.info("ℹ️ Không có figures nào được tách")
+        return
+    
+    st.success(f"🎯 Đã tách {len(figures)} figures minh họa")
+    
+    # Display in grid
+    cols_per_row = 3
+    for i in range(0, len(figures), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j in range(cols_per_row):
+            if i + j < len(figures):
+                fig = figures[i + j]
+                with cols[j]:
+                    try:
+                        img_data = base64.b64decode(fig['base64'])
+                        img_pil = Image.open(io.BytesIO(img_data))
+                        
+                        st.image(img_pil, use_column_width=True)
+                        
+                        type_icon = "📊" if fig['is_table'] else "🖼️"
+                        confidence = fig.get('confidence', 0)
+                        table_type = fig.get('table_type', 'unknown')
+                        
+                        st.markdown(f"""
+                        <div class="figure-container">
+                            <strong>{type_icon} {fig['name']}</strong><br>
+                            🎯 {confidence:.1f}% | {table_type}<br>
+                            📏 {fig['method']} detection
+                        </div>
+                        """, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"Error displaying figure: {str(e)}")
 
 def validate_api_key(api_key: str) -> bool:
     if not api_key or len(api_key) < 20:
@@ -598,329 +1038,442 @@ def format_file_size(size_bytes: int) -> str:
 
 def main():
     try:
-        st.markdown('<h1 class="main-header">📝 SUPER TABLE PROTECTION PDF/LaTeX Converter</h1>', unsafe_allow_html=True)
+        st.markdown('<h1 class="main-header">📝 Smart Figure Detection PDF/LaTeX Converter</h1>', unsafe_allow_html=True)
         
         # Hero section
         st.markdown("""
         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
-            <h2 style="margin: 0;">🛡️ SIÊU BẢO VỆ BẢNG ĐÚNG/SAI + 🎯 SMART DETECTION</h2>
-            <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Tuyệt đối không cắt bảng • ✅ Minimal processing cho tables • ✅ Enhanced prompts • ✅ Perfect preservation</p>
+            <h2 style="margin: 0;">🎯 SMART DETECTION: Bảo vệ bảng Đúng/Sai + Tách figures minh họa</h2>
+            <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Không cắt bảng Đúng/Sai • ✅ Tách bảng biến thiên/đồ thị • ✅ Smart classification • ✅ Full PDF support</p>
         </div>
         """, unsafe_allow_html=True)
         
         # Sidebar
         with st.sidebar:
-            st.header("⚙️ Cài đặt")
+            st.header("⚙️ Settings")
             
             api_key = st.text_input("Gemini API Key", type="password")
             
             if api_key:
                 if validate_api_key(api_key):
-                    st.success("✅ API key hợp lệ")
+                    st.success("✅ Valid API key")
                 else:
-                    st.error("❌ API key không hợp lệ")
+                    st.error("❌ Invalid API key")
             
             st.markdown("---")
             
-            # Super Table Protection Settings
-            st.markdown("### 🛡️ Super Table Protection")
-            enable_super_protection = st.checkbox("🛡️ Bật Super Protection", value=True)
-            
-            if enable_super_protection:
-                max_table_processing = st.checkbox("📊 Minimal processing for tables", value=True)
-                enhanced_prompts = st.checkbox("🎯 Enhanced table prompts", value=True)
+            # Figure extraction settings
+            if CV2_AVAILABLE:
+                st.markdown("### 🎯 Figure Extraction")
+                enable_extraction = st.checkbox("🖼️ Extract illustration figures", value=True)
                 
-                with st.expander("🔧 Protection Settings"):
-                    table_sensitivity = st.slider("Table detection sensitivity", 0.5, 2.0, 1.0, 0.1)
-                    protection_mode = st.selectbox("Protection mode", 
-                                                 ["Maximum", "High", "Medium"], 
-                                                 index=0)
+                if enable_extraction:
+                    confidence_threshold = st.slider("Confidence threshold (%)", 50, 95, 60, 5)
+                    max_figures = st.slider("Max figures per page", 5, 25, 15, 5)
+                    debug_mode = st.checkbox("Debug mode", value=False)
+            else:
+                enable_extraction = False
+                st.error("❌ OpenCV not available - no figure extraction")
+            
+            st.markdown("---")
+            st.markdown("### 🛡️ Protection Rules")
+            st.markdown("""
+            **🚫 KHÔNG cắt:**
+            - Bảng Đúng/Sai (nội dung chính)
+            - Text content chính
+            
+            **✅ CÓ THỂ cắt:**
+            - Bảng biến thiên  
+            - Đồ thị, hình vẽ
+            - Figures minh họa
+            """)
         
         if not api_key:
-            st.warning("⚠️ Vui lòng nhập Gemini API Key!")
+            st.warning("⚠️ Please enter Gemini API Key!")
             return
         
         if not validate_api_key(api_key):
-            st.error("❌ API key không hợp lệ!")
+            st.error("❌ Invalid API key!")
             return
         
-        # Initialize API
+        # Initialize API and extractor
         try:
             gemini_api = GeminiAPI(api_key)
+            
+            if enable_extraction and CV2_AVAILABLE:
+                image_extractor = SuperEnhancedImageExtractor()
+                image_extractor.final_confidence_threshold = confidence_threshold if 'confidence_threshold' in locals() else 60
+                image_extractor.max_figures = max_figures if 'max_figures' in locals() else 15
+                image_extractor.debug_mode = debug_mode if 'debug_mode' in locals() else False
+            else:
+                image_extractor = None
         except Exception as e:
-            st.error(f"❌ API initialization error: {str(e)}")
+            st.error(f"❌ Initialization error: {str(e)}")
             return
         
         # Main tabs
-        tab1, tab2, tab3 = st.tabs(["📱 Super Phone Processing", "🖼️ Single Image", "📄 PDF Processing"])
+        tab1, tab2, tab3 = st.tabs(["📱 Phone Image", "🖼️ Single Image", "📄 PDF Processing"])
         
-        # =================== TAB 1: SUPER PHONE PROCESSING ===================
+        # =================== TAB 1: PHONE IMAGE ===================
         with tab1:
-            st.header("📱 Super Phone Processing với Siêu Bảo Vệ Bảng")
+            st.header("📱 Phone Image Processing")
             
-            # Table protection alert
             st.markdown("""
-            <div class="table-protection-alert">
-                <h4>🛡️ SIÊU BẢO VỆ BẢNG ĐÚNG/SAI:</h4>
-                <p><strong>🔍 Smart Detection:</strong> Tự động phát hiện bảng True/False</p>
-                <p><strong>⚡ Minimal Processing:</strong> Xử lý tối thiểu để bảo vệ cấu trúc</p>
-                <p><strong>🎯 Enhanced Prompts:</strong> Prompts chuyên biệt cho bảng</p>
-                <p><strong>📐 Structure Preservation:</strong> Tuyệt đối không cắt cột</p>
-                <p><strong>✨ Perfect LaTeX:</strong> Format chuẩn cho bảng Đúng/Sai</p>
+            <div class="protection-alert">
+                <h4>🎯 Smart Processing:</h4>
+                <p><strong>🛡️ Content Protection:</strong> Bảng Đúng/Sai được bảo vệ tuyệt đối</p>
+                <p><strong>🖼️ Figure Extraction:</strong> Tách figures minh họa (bảng biến thiên, đồ thị)</p>
+                <p><strong>📱 Phone Optimization:</strong> Xử lý tối ưu cho ảnh điện thoại</p>
             </div>
             """, unsafe_allow_html=True)
             
-            uploaded_image = st.file_uploader("Chọn ảnh điện thoại", type=['png', 'jpg', 'jpeg'], key="super_phone")
+            uploaded_phone = st.file_uploader("Choose phone image", type=['png', 'jpg', 'jpeg'], key="phone_img")
             
-            if uploaded_image:
+            if uploaded_phone:
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
-                    st.subheader("📱 Ảnh gốc")
+                    st.subheader("📱 Original Image")
                     
-                    img_pil = Image.open(uploaded_image)
-                    st.image(img_pil, caption=f"Original: {uploaded_image.name}", use_column_width=True)
+                    img_pil = Image.open(uploaded_phone)
+                    st.image(img_pil, caption=f"Original: {uploaded_phone.name}", use_column_width=True)
                     
-                    # Image analysis
-                    is_screenshot = False
-                    if CV2_AVAILABLE:
-                        is_screenshot = EnhancedPhoneImageProcessor._detect_screenshot(img_pil)
-                        
-                        if is_screenshot:
-                            st.success("📺 **Detected: Screenshot** - Will use minimal processing")
-                        else:
-                            st.info("📱 **Detected: Phone photo** - Will apply gentle processing")
-                    
-                    # Image info
                     st.markdown("**📊 Image Info:**")
                     st.write(f"• Size: {img_pil.size[0]} x {img_pil.size[1]}")
-                    st.write(f"• File size: {format_file_size(uploaded_image.size)}")
+                    st.write(f"• File size: {format_file_size(uploaded_phone.size)}")
                     
-                    # Processing settings
-                    st.markdown("### ⚙️ Processing Settings")
+                    # Processing options
+                    st.markdown("### ⚙️ Processing Options")
+                    preserve_tables = st.checkbox("🛡️ Protect True/False tables", value=True)
+                    enhance_text = st.checkbox("✨ Enhance text", value=True)
+                    auto_rotate = st.checkbox("🔄 Auto rotate", value=True)
+                    contrast_boost = st.slider("Contrast boost", 1.0, 1.5, 1.2, 0.1)
                     
-                    if enable_super_protection:
-                        st.success("🛡️ Super Table Protection: ACTIVE")
-                        preserve_tables = True
-                        process_intensity = st.selectbox(
-                            "Processing intensity",
-                            ["Minimal (Best for tables)", "Gentle", "Standard"],
-                            index=0
-                        )
+                    if enable_extraction:
+                        extract_figures = st.checkbox("🎯 Extract illustration figures", value=True)
                     else:
-                        preserve_tables = st.checkbox("🛡️ Preserve tables", value=True)
-                        process_intensity = "Standard"
-                    
-                    enhance_text = st.checkbox("✨ Text enhancement", value=True)
-                    auto_rotate = st.checkbox("🔄 Auto rotation", value=True)
+                        extract_figures = False
                 
                 with col2:
                     st.subheader("🔄 Processing & Results")
                     
-                    if st.button("🚀 Process with Super Protection", type="primary", key="super_process"):
-                        img_bytes = uploaded_image.getvalue()
+                    if st.button("🚀 Process Phone Image", type="primary", key="process_phone"):
+                        img_bytes = uploaded_phone.getvalue()
                         
-                        # Step 1: Super enhanced processing
-                        with st.spinner("🛡️ Processing with super table protection..."):
+                        # Step 1: Image processing
+                        with st.spinner("🔄 Processing phone image..."):
                             try:
-                                processed_img, detected_tables = EnhancedPhoneImageProcessor.process_phone_image_with_super_table_protection(
+                                processed_img = EnhancedPhoneImageProcessor.process_phone_image(
                                     img_bytes,
                                     preserve_tables=preserve_tables,
                                     enhance_text=enhance_text,
                                     auto_rotate=auto_rotate,
-                                    perspective_correct=(process_intensity != "Minimal (Best for tables)"),
-                                    noise_reduction=True,
-                                    contrast_boost=1.1 if process_intensity == "Minimal (Best for tables)" else 1.2,
-                                    is_screenshot=is_screenshot
+                                    contrast_boost=contrast_boost
                                 )
                                 
-                                # Display processing stats
-                                st.markdown("""
-                                <div class="processing-stats">
-                                    <h4>📊 Processing Results:</h4>
-                                """, unsafe_allow_html=True)
+                                st.success("✅ Image processed!")
+                                st.image(processed_img, caption="Processed Image", use_column_width=True)
                                 
-                                if detected_tables:
-                                    st.markdown(f"<p><strong>🛡️ Protected Tables:</strong> {len(detected_tables)} True/False tables detected</p>", unsafe_allow_html=True)
-                                    st.markdown(f"<p><strong>⚡ Processing Mode:</strong> Super Protection Active</p>", unsafe_allow_html=True)
-                                else:
-                                    st.markdown(f"<p><strong>📝 Content Type:</strong> No True/False tables detected</p>", unsafe_allow_html=True)
-                                    st.markdown(f"<p><strong>⚡ Processing Mode:</strong> Standard Enhancement</p>", unsafe_allow_html=True)
-                                
-                                st.markdown("</div>", unsafe_allow_html=True)
-                                
-                                # Display processed image
-                                st.markdown("**📸 Processed Image:**")
-                                st.image(processed_img, use_column_width=True)
-                                
-                                # Convert to bytes for API
+                                # Convert to bytes
                                 processed_buffer = io.BytesIO()
-                                processed_img.save(processed_buffer, format='PNG', quality=95)
+                                processed_img.save(processed_buffer, format='PNG')
                                 processed_bytes = processed_buffer.getvalue()
                                 
                             except Exception as e:
                                 st.error(f"❌ Processing error: {str(e)}")
                                 processed_bytes = img_bytes
-                                detected_tables = []
                         
-                        # Step 2: LaTeX conversion with super prompts
-                        with st.spinner("📝 Converting to LaTeX with super prompts..."):
+                        # Step 2: Figure extraction
+                        extracted_figures = []
+                        if extract_figures and image_extractor:
+                            with st.spinner("🎯 Extracting illustration figures..."):
+                                try:
+                                    figures, img_h, img_w, _, _ = image_extractor.extract_illustration_figures(processed_bytes)
+                                    extracted_figures = figures
+                                    
+                                    if figures:
+                                        st.success(f"🎯 Extracted {len(figures)} illustration figures!")
+                                        with st.expander("🖼️ View extracted figures"):
+                                            display_figures(figures)
+                                    else:
+                                        st.info("ℹ️ No illustration figures found")
+                                        
+                                except Exception as e:
+                                    st.error(f"❌ Figure extraction error: {str(e)}")
+                        
+                        # Step 3: LaTeX conversion
+                        with st.spinner("📝 Converting to LaTeX..."):
                             try:
-                                # Create super enhanced prompt
-                                has_tables = len(detected_tables) > 0
-                                super_prompt = create_super_enhanced_table_prompt(
-                                    is_screenshot=is_screenshot,
-                                    has_true_false_tables=has_tables
-                                )
-                                
-                                latex_result = gemini_api.convert_to_latex(
-                                    processed_bytes, 
-                                    "image/png", 
-                                    super_prompt
-                                )
+                                prompt = create_enhanced_prompt(has_illustrations=len(extracted_figures) > 0)
+                                latex_result = gemini_api.convert_to_latex(processed_bytes, "image/png", prompt)
                                 
                                 if latex_result:
-                                    st.success("🎉 Super conversion completed!")
+                                    # Insert figures if available
+                                    if extracted_figures and image_extractor:
+                                        latex_result = image_extractor.insert_figures_into_text(
+                                            latex_result, extracted_figures, img_h, img_w
+                                        )
                                     
-                                    # Display result with highlighting
+                                    st.success("🎉 Conversion completed!")
+                                    
                                     st.markdown("### 📝 LaTeX Result")
-                                    
-                                    if has_tables:
-                                        st.markdown("""
-                                        <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 5px; padding: 1rem; margin: 1rem 0;">
-                                            <h5>🛡️ Table Protection Applied</h5>
-                                            <p>Bảng Đúng/Sai đã được bảo vệ với processing tối thiểu và prompts chuyên biệt.</p>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                                    
                                     st.markdown('<div class="latex-output">', unsafe_allow_html=True)
                                     st.code(latex_result, language="latex")
                                     st.markdown('</div>', unsafe_allow_html=True)
                                     
                                     # Save to session
-                                    st.session_state.super_latex_content = latex_result
-                                    st.session_state.super_processed_image = processed_img
-                                    st.session_state.super_detected_tables = detected_tables
+                                    st.session_state.phone_latex = latex_result
+                                    st.session_state.phone_figures = extracted_figures
                                     
                                 else:
-                                    st.error("❌ API returned no result")
+                                    st.error("❌ No result from API")
                                     
                             except Exception as e:
                                 st.error(f"❌ Conversion error: {str(e)}")
                     
                     # Download section
-                    if 'super_latex_content' in st.session_state:
+                    if 'phone_latex' in st.session_state:
                         st.markdown("---")
-                        st.markdown("### 📥 Downloads")
+                        st.markdown("### 📥 Download")
                         
-                        col_a, col_b = st.columns(2)
-                        
-                        with col_a:
-                            st.download_button(
-                                label="📝 Download LaTeX",
-                                data=st.session_state.super_latex_content,
-                                file_name=uploaded_image.name.replace(uploaded_image.name.split('.')[-1], 'tex'),
-                                mime="text/plain",
-                                type="primary"
-                            )
-                        
-                        with col_b:
-                            processed_buffer = io.BytesIO()
-                            st.session_state.super_processed_image.save(processed_buffer, format='PNG')
-                            
-                            st.download_button(
-                                label="📸 Download Processed Image",
-                                data=processed_buffer.getvalue(),
-                                file_name=uploaded_image.name.replace(uploaded_image.name.split('.')[-1], 'processed.png'),
-                                mime="image/png"
-                            )
-                        
-                        # Statistics
-                        if 'super_detected_tables' in st.session_state:
-                            tables = st.session_state.super_detected_tables
-                            if tables:
-                                st.markdown("### 📊 Protection Statistics")
-                                st.success(f"🛡️ {len(tables)} True/False tables were super-protected")
-                                st.info("Tables processed with minimal enhancement to preserve structure")
+                        st.download_button(
+                            label="📝 Download LaTeX (.tex)",
+                            data=st.session_state.phone_latex,
+                            file_name=uploaded_phone.name.replace(uploaded_phone.name.split('.')[-1], 'tex'),
+                            mime="text/plain",
+                            type="primary"
+                        )
         
         # =================== TAB 2: SINGLE IMAGE ===================
         with tab2:
             st.header("🖼️ Single Image Processing")
-            st.info("Upload a single image for LaTeX conversion with table protection")
             
-            uploaded_single = st.file_uploader("Choose image", type=['png', 'jpg', 'jpeg'], key="single_img")
+            uploaded_single = st.file_uploader("Choose image", type=['png', 'jpg', 'jpeg'], key="single_image")
             
             if uploaded_single:
-                img_pil = Image.open(uploaded_single)
-                st.image(img_pil, caption="Original Image", use_column_width=True)
+                col1, col2 = st.columns([1, 1])
                 
-                if st.button("Convert to LaTeX", type="primary"):
-                    with st.spinner("Converting..."):
-                        try:
-                            img_bytes = uploaded_single.getvalue()
-                            
-                            # Quick detection for tables
-                            has_tables = False
-                            if CV2_AVAILABLE:
-                                img_array = np.array(img_pil)
-                                detected_tables = SuperEnhancedTableProtector.detect_true_false_tables(img_array)
-                                has_tables = len(detected_tables) > 0
-                            
-                            # Use super prompt
-                            super_prompt = create_super_enhanced_table_prompt(
-                                is_screenshot=False,
-                                has_true_false_tables=has_tables
-                            )
-                            
-                            latex_result = gemini_api.convert_to_latex(img_bytes, "image/png", super_prompt)
-                            
-                            if latex_result:
-                                st.success("✅ Conversion completed!")
-                                st.code(latex_result, language="latex")
+                with col1:
+                    st.subheader("🖼️ Original Image")
+                    
+                    img_pil = Image.open(uploaded_single)
+                    st.image(img_pil, caption=f"Original: {uploaded_single.name}", use_column_width=True)
+                    
+                    st.markdown("**📊 Image Info:**")
+                    st.write(f"• Size: {img_pil.size[0]} x {img_pil.size[1]}")
+                    st.write(f"• File size: {format_file_size(uploaded_single.size)}")
+                    
+                    if enable_extraction:
+                        extract_figures_single = st.checkbox("🎯 Extract figures", value=True, key="extract_single")
+                    else:
+                        extract_figures_single = False
+                
+                with col2:
+                    st.subheader("🔄 Processing")
+                    
+                    if st.button("🚀 Convert to LaTeX", type="primary", key="convert_single"):
+                        img_bytes = uploaded_single.getvalue()
+                        
+                        # Figure extraction
+                        extracted_figures = []
+                        if extract_figures_single and image_extractor:
+                            with st.spinner("🎯 Extracting figures..."):
+                                try:
+                                    figures, img_h, img_w, _, _ = image_extractor.extract_illustration_figures(img_bytes)
+                                    extracted_figures = figures
+                                    
+                                    if figures:
+                                        st.success(f"🎯 Extracted {len(figures)} figures!")
+                                        with st.expander("🖼️ View figures"):
+                                            display_figures(figures)
+                                    
+                                except Exception as e:
+                                    st.error(f"❌ Figure extraction error: {str(e)}")
+                        
+                        # LaTeX conversion
+                        with st.spinner("📝 Converting to LaTeX..."):
+                            try:
+                                prompt = create_enhanced_prompt(has_illustrations=len(extracted_figures) > 0)
+                                latex_result = gemini_api.convert_to_latex(img_bytes, "image/png", prompt)
                                 
-                                st.download_button(
-                                    label="📝 Download LaTeX",
-                                    data=latex_result,
-                                    file_name=uploaded_single.name.replace(uploaded_single.name.split('.')[-1], 'tex'),
-                                    mime="text/plain"
-                                )
-                            else:
-                                st.error("❌ Conversion failed")
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
+                                if latex_result:
+                                    # Insert figures
+                                    if extracted_figures and image_extractor:
+                                        latex_result = image_extractor.insert_figures_into_text(
+                                            latex_result, extracted_figures, img_h, img_w
+                                        )
+                                    
+                                    st.success("✅ Conversion completed!")
+                                    
+                                    st.markdown("### 📝 LaTeX Result")
+                                    st.markdown('<div class="latex-output">', unsafe_allow_html=True)
+                                    st.code(latex_result, language="latex")
+                                    st.markdown('</div>', unsafe_allow_html=True)
+                                    
+                                    # Download
+                                    st.download_button(
+                                        label="📝 Download LaTeX",
+                                        data=latex_result,
+                                        file_name=uploaded_single.name.replace(uploaded_single.name.split('.')[-1], 'tex'),
+                                        mime="text/plain",
+                                        type="primary"
+                                    )
+                                    
+                                else:
+                                    st.error("❌ Conversion failed")
+                                    
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
         
         # =================== TAB 3: PDF PROCESSING ===================
         with tab3:
             st.header("📄 PDF Processing")
-            st.info("Upload PDF for batch processing with table protection")
             
-            uploaded_pdf = st.file_uploader("Choose PDF", type=['pdf'], key="pdf_upload")
+            uploaded_pdf = st.file_uploader("Choose PDF file", type=['pdf'], key="pdf_file")
             
             if uploaded_pdf:
-                st.write(f"📄 PDF: {uploaded_pdf.name}")
-                st.write(f"📊 Size: {format_file_size(uploaded_pdf.size)}")
+                col1, col2 = st.columns([1, 1])
                 
-                max_pages = st.number_input("Max pages to process", min_value=1, max_value=50, value=10)
+                with col1:
+                    st.subheader("📄 PDF Information")
+                    
+                    st.write(f"📄 File: {uploaded_pdf.name}")
+                    st.write(f"📊 Size: {format_file_size(uploaded_pdf.size)}")
+                    
+                    # PDF settings
+                    max_pages = st.number_input("Max pages to process", min_value=1, max_value=50, value=10)
+                    
+                    if enable_extraction:
+                        extract_pdf_figures = st.checkbox("🎯 Extract figures from PDF", value=True, key="extract_pdf")
+                    else:
+                        extract_pdf_figures = False
                 
-                if st.button("Process PDF", type="primary"):
-                    st.info("📄 PDF processing will be implemented with the same super protection features")
+                with col2:
+                    st.subheader("🔄 PDF Processing")
+                    
+                    if st.button("🚀 Process PDF", type="primary", key="process_pdf"):
+                        
+                        # Extract images from PDF
+                        with st.spinner("📄 Extracting pages from PDF..."):
+                            try:
+                                pdf_images = PDFProcessor.extract_images_from_pdf(uploaded_pdf, max_pages)
+                                st.success(f"✅ Extracted {len(pdf_images)} pages")
+                                
+                            except Exception as e:
+                                st.error(f"❌ PDF extraction error: {str(e)}")
+                                pdf_images = []
+                        
+                        if pdf_images:
+                            all_latex_content = []
+                            all_figures = []
+                            
+                            # Process each page
+                            progress_bar = st.progress(0)
+                            
+                            for i, (page_img, page_num) in enumerate(pdf_images):
+                                try:
+                                    progress_bar.progress((i + 1) / len(pdf_images))
+                                    
+                                    with st.spinner(f"🔄 Processing page {page_num}..."):
+                                        # Convert page to bytes
+                                        page_buffer = io.BytesIO()
+                                        page_img.save(page_buffer, format='PNG')
+                                        page_bytes = page_buffer.getvalue()
+                                        
+                                        # Extract figures from page
+                                        page_figures = []
+                                        if extract_pdf_figures and image_extractor:
+                                            try:
+                                                figures, img_h, img_w, _, _ = image_extractor.extract_illustration_figures(
+                                                    page_bytes, len(all_figures), 0
+                                                )
+                                                page_figures = figures
+                                                all_figures.extend(figures)
+                                                
+                                            except Exception as e:
+                                                st.warning(f"Figure extraction error on page {page_num}: {str(e)}")
+                                        
+                                        # Convert page to LaTeX
+                                        try:
+                                            prompt = create_enhanced_prompt(has_illustrations=len(page_figures) > 0)
+                                            page_latex = gemini_api.convert_to_latex(page_bytes, "image/png", prompt)
+                                            
+                                            if page_latex:
+                                                # Insert figures if available
+                                                if page_figures and image_extractor:
+                                                    page_latex = image_extractor.insert_figures_into_text(
+                                                        page_latex, page_figures, img_h, img_w
+                                                    )
+                                                
+                                                # Add page header
+                                                page_latex = f"% ===== PAGE {page_num} =====\n\n{page_latex}\n\n"
+                                                all_latex_content.append(page_latex)
+                                                
+                                                st.success(f"✅ Page {page_num} processed")
+                                            else:
+                                                st.warning(f"⚠️ Page {page_num}: No LaTeX result")
+                                                
+                                        except Exception as e:
+                                            st.error(f"❌ Page {page_num} conversion error: {str(e)}")
+                                            
+                                except Exception as e:
+                                    st.error(f"❌ Error processing page {page_num}: {str(e)}")
+                                    continue
+                            
+                            progress_bar.progress(1.0)
+                            
+                            # Combine all content
+                            if all_latex_content:
+                                combined_latex = "\n".join(all_latex_content)
+                                
+                                st.success(f"🎉 PDF processing completed! {len(all_latex_content)} pages processed")
+                                
+                                # Display results
+                                st.markdown("### 📝 Combined LaTeX Result")
+                                st.markdown('<div class="latex-output">', unsafe_allow_html=True)
+                                st.code(combined_latex, language="latex")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Show extracted figures
+                                if all_figures:
+                                    st.markdown("### 🖼️ Extracted Figures")
+                                    display_figures(all_figures)
+                                
+                                # Download section
+                                st.markdown("### 📥 Download Results")
+                                
+                                col_a, col_b = st.columns(2)
+                                
+                                with col_a:
+                                    st.download_button(
+                                        label="📝 Download Combined LaTeX",
+                                        data=combined_latex,
+                                        file_name=uploaded_pdf.name.replace('.pdf', '_combined.tex'),
+                                        mime="text/plain",
+                                        type="primary"
+                                    )
+                                
+                                with col_b:
+                                    if all_figures:
+                                        st.write(f"📊 Total figures extracted: {len(all_figures)}")
+                            else:
+                                st.error("❌ No content was successfully processed")
         
         # Footer
         st.markdown("---")
         st.markdown("""
         <div style='text-align: center; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 2rem; border-radius: 15px;'>
-            <h3>🛡️ SUPER TABLE PROTECTION GUARANTEE</h3>
-            <p><strong>✅ Tuyệt đối không cắt bảng Đúng/Sai</strong></p>
-            <p><strong>⚡ Minimal processing cho vùng có bảng</strong></p>
-            <p><strong>🎯 Enhanced prompts chuyên biệt</strong></p>
-            <p><strong>📐 Perfect structure preservation</strong></p>
-            <p><strong>🔍 Smart detection algorithms</strong></p>
+            <h3>🎯 SMART FIGURE DETECTION</h3>
+            <p><strong>🛡️ Tuyệt đối bảo vệ bảng Đúng/Sai</strong></p>
+            <p><strong>🖼️ Tách thông minh figures minh họa</strong></p>
+            <p><strong>📱 Tối ưu cho ảnh điện thoại</strong></p>
+            <p><strong>📄 Xử lý PDF đầy đủ</strong></p>
+            <p><strong>🎯 Classification thông minh</strong></p>
         </div>
         """, unsafe_allow_html=True)
         
     except Exception as e:
         st.error(f"❌ Application error: {str(e)}")
-        st.error("Please refresh and try again.")
 
 if __name__ == "__main__":
     main()
