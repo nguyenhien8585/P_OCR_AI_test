@@ -2343,7 +2343,7 @@ def main():
                     whitespace_threshold = st.slider("Whitespace Ratio Threshold", 0.1, 0.8, 0.45, 0.05)
                     
                     st.markdown("**🎯 Confidence Filter:**")
-                    confidence_threshold = st.slider("Final Confidence Threshold (%)", 50, 95, 65, 5)
+                    confidence_threshold = st.slider("Final Confidence Threshold (%)", 30, 95, 65, 5)
                     st.markdown(f"<small>✅ Chỉ giữ figures có confidence ≥ {confidence_threshold}%</small>", unsafe_allow_html=True)
                     
                     st.markdown("**📝 Word Export Options:**")
