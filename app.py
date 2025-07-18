@@ -942,9 +942,18 @@ class SuperEnhancedImageExtractor:
         
         if self.debug_mode:
             st.write(f"🎯 Confidence Filter: {len(high_confidence_candidates)}/{len(candidates)} figures above {self.final_confidence_threshold}%")
+            if len(candidates) > len(high_confidence_candidates):
+                filtered_out = [c for c in candidates if c.get('final_confidence', 0) < self.final_confidence_threshold]
+                st.write(f"❌ Filtered out: {[f'conf={c.get(\"final_confidence\", 0):.1f}%' for c in filtered_out[:3]]}")
         else:
             if len(candidates) > 0:
                 st.info(f"🎯 Confidence Filter: Giữ {len(high_confidence_candidates)}/{len(candidates)} figures có confidence ≥{self.final_confidence_threshold}%")
+                if len(high_confidence_candidates) == 0 and len(candidates) > 0:
+                    max_conf = max(c.get('final_confidence', 0) for c in candidates)
+                    st.warning(f"⚠️ Tất cả figures bị loại bỏ! Highest confidence: {max_conf:.1f}%. Thử giảm threshold.")
+                elif len(high_confidence_candidates) < len(candidates):
+                    filtered_count = len(candidates) - len(high_confidence_candidates)
+                    st.info(f"ℹ️ Đã lọc bỏ {filtered_count} figures có confidence thấp")
         
         final_figures = []
         img_idx = 0
@@ -1006,9 +1015,9 @@ class SuperEnhancedImageExtractor:
         
         return cropped
     
-    def insert_figures_into_text_precisely(self, text, figures, img_h, img_w):
+    def insert_figures_into_text_precisely(self, text, figures, img_h, img_w, show_override_info=True):
         """
-        Chèn figures vào text
+        Chèn figures vào text với option hiển thị override info
         """
         if not figures:
             return text
@@ -1031,13 +1040,12 @@ class SuperEnhancedImageExtractor:
             else:
                 tag = f"[🖼️ HÌNH: {figure['name']}]"
             
-            # Thêm thông tin override nếu có
-            override_info = ""
-            if figure.get('override_reason'):
-                override_info = f" (kept: {figure['override_reason']})"
+            # Thêm thông tin override nếu có và được yêu cầu
+            if show_override_info and figure.get('override_reason'):
+                tag += f" (kept: {figure['override_reason']})"
             
             result_lines.insert(actual_insertion, "")
-            result_lines.insert(actual_insertion + 1, tag + override_info)
+            result_lines.insert(actual_insertion + 1, tag)
             result_lines.insert(actual_insertion + 2, "")
             
             offset += 3
@@ -1339,20 +1347,35 @@ class EnhancedWordExporter:
     @staticmethod
     def _insert_figure_to_word(doc, tag_line, extracted_figures):
         """
-        Chèn hình ảnh vào Word
+        Chèn hình ảnh vào Word - xử lý cả override info
         """
         try:
-            # Extract figure name
+            # Extract figure name - xử lý cả trường hợp có override info
             fig_name = None
             if 'HÌNH:' in tag_line:
-                fig_name = tag_line.split('HÌNH:')[1].split(']')[0].split('(')[0].strip()
+                # Lấy phần sau "HÌNH:" và trước "]"
+                hình_part = tag_line.split('HÌNH:')[1]
+                # Loại bỏ phần override info nếu có
+                if '(' in hình_part:
+                    fig_name = hình_part.split('(')[0].strip()
+                else:
+                    fig_name = hình_part.split(']')[0].strip()
             elif 'BẢNG:' in tag_line:
-                fig_name = tag_line.split('BẢNG:')[1].split(']')[0].split('(')[0].strip()
+                # Lấy phần sau "BẢNG:" và trước "]"
+                bảng_part = tag_line.split('BẢNG:')[1]
+                # Loại bỏ phần override info nếu có
+                if '(' in bảng_part:
+                    fig_name = bảng_part.split('(')[0].strip()
+                else:
+                    fig_name = bảng_part.split(']')[0].strip()
             
             if not fig_name or not extracted_figures:
+                # Thêm placeholder text nếu không tìm thấy figure
+                para = doc.add_paragraph(f"[Không tìm thấy figure: {fig_name if fig_name else 'unknown'}]")
+                para.alignment = 1
                 return
             
-            # Find matching figure
+            # Tìm figure matching
             target_figure = None
             for fig in extracted_figures:
                 if fig['name'] == fig_name:
@@ -1365,31 +1388,51 @@ class EnhancedWordExporter:
                     img_data = base64.b64decode(target_figure['base64'])
                     img_pil = Image.open(io.BytesIO(img_data))
                     
+                    # Chuyển đổi format nếu cần
                     if img_pil.mode in ('RGBA', 'LA', 'P'):
                         img_pil = img_pil.convert('RGB')
                     
+                    # Tạo file tạm
                     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
                         img_pil.save(tmp_file.name, 'PNG')
                         
                         try:
+                            # Tính toán kích thước ảnh phù hợp
                             page_width = doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin
                             img_width = min(page_width * 0.8, Inches(6))
                         except:
                             img_width = Inches(5)
                         
+                        # Chèn ảnh vào document
                         para = doc.add_paragraph()
-                        para.alignment = 1
+                        para.alignment = 1  # Center alignment
                         run = para.add_run()
                         run.add_picture(tmp_file.name, width=img_width)
                         
+                        # Thêm caption nếu có override info
+                        if target_figure.get('override_reason'):
+                            caption_para = doc.add_paragraph()
+                            caption_para.alignment = 1
+                            caption_run = caption_para.add_run(f"({target_figure['override_reason']})")
+                            caption_run.font.size = Pt(10)
+                            caption_run.font.italic = True
+                        
+                        # Xóa file tạm
                         os.unlink(tmp_file.name)
                     
                 except Exception as img_error:
-                    para = doc.add_paragraph(f"[Không thể hiển thị {target_figure['name']}]")
+                    # Nếu lỗi xử lý ảnh, thêm placeholder
+                    para = doc.add_paragraph(f"[Lỗi hiển thị {target_figure['name']}: {str(img_error)}]")
                     para.alignment = 1
+            else:
+                # Không tìm thấy figure matching
+                para = doc.add_paragraph(f"[Không tìm thấy figure: {fig_name}]")
+                para.alignment = 1
                     
         except Exception as e:
-            st.error(f"❌ Lỗi chèn figure: {str(e)}")
+            # Lỗi parsing tag
+            para = doc.add_paragraph(f"[Lỗi xử lý figure tag: {str(e)}]")
+            para.alignment = 1
 
 def display_beautiful_figures(figures, debug_img=None):
     """
@@ -1517,6 +1560,10 @@ def main():
                     st.markdown("**🎯 Confidence Filter:**")
                     confidence_threshold = st.slider("Final Confidence Threshold (%)", 50, 95, 65, 5)
                     st.markdown(f"<small>✅ Chỉ giữ figures có confidence ≥ {confidence_threshold}%</small>", unsafe_allow_html=True)
+                    
+                    st.markdown("**📝 Word Export Options:**")
+                    show_override_info = st.checkbox("Hiển thị override info trong Word", value=False)
+                    st.markdown("<small>ℹ️ Nếu tắt, chỉ hiển thị [🖼️ HÌNH: figure-1.jpeg] thôi</small>", unsafe_allow_html=True)
                     
                     st.markdown("**Override Settings:**")
                     enable_geometry_override = st.checkbox("Geometry Override", value=True)
@@ -1718,8 +1765,9 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                 if latex_result:
                                     # Chèn figures
                                     if enable_extraction and extracted_figures and CV2_AVAILABLE and image_extractor:
+                                        show_override = show_override_info if 'show_override_info' in locals() else True
                                         latex_result = image_extractor.insert_figures_into_text_precisely(
-                                            latex_result, extracted_figures, h, w
+                                            latex_result, extracted_figures, h, w, show_override
                                         )
                                     
                                     all_latex_content.append(f"<!-- 📄 Trang {page_num} -->\n{latex_result}\n")
@@ -1799,11 +1847,25 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                 with st.spinner("🔄 Đang tạo Word..."):
                                     try:
                                         extracted_figs = st.session_state.get('pdf_extracted_figures')
+                                        show_override = show_override_info if 'show_override_info' in locals() else False
                                         
-                                        word_buffer = EnhancedWordExporter.create_word_document(
-                                            st.session_state.pdf_latex_content,
-                                            extracted_figures=extracted_figs
-                                        )
+                                        # Nếu không hiển thị override info, tạo bản sao figures không có override info trong LaTeX
+                                        if not show_override:
+                                            # Tạo lại LaTeX content không có override info
+                                            clean_latex = st.session_state.pdf_latex_content
+                                            # Loại bỏ override info từ LaTeX content
+                                            import re
+                                            clean_latex = re.sub(r' \(kept: [^)]+\)', '', clean_latex)
+                                            
+                                            word_buffer = EnhancedWordExporter.create_word_document(
+                                                clean_latex,
+                                                extracted_figures=extracted_figs
+                                            )
+                                        else:
+                                            word_buffer = EnhancedWordExporter.create_word_document(
+                                                st.session_state.pdf_latex_content,
+                                                extracted_figures=extracted_figs
+                                            )
                                         
                                         st.download_button(
                                             label="📄 Tải Word (.docx)",
@@ -1844,6 +1906,15 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                 
                 # Extract figures option
                 extract_figures_single = st.checkbox("🎯 Tách figures từ ảnh", value=True, key="single_extract")
+                
+                if extract_figures_single and enable_extraction and CV2_AVAILABLE:
+                    st.markdown("**⚙️ Cài đặt tách ảnh:**")
+                    single_confidence_threshold = st.slider("Confidence Threshold (%)", 50, 95, 65, 5, key="single_conf")
+                    st.markdown(f"<small>✅ Chỉ giữ figures có confidence ≥ {single_confidence_threshold}%</small>", unsafe_allow_html=True)
+                    
+                    single_debug = st.checkbox("Debug mode cho ảnh đơn", value=False, key="single_debug")
+                    if single_debug:
+                        st.markdown("<small>🔍 Sẽ hiển thị thông tin debug chi tiết</small>", unsafe_allow_html=True)
             
             with col2:
                 st.subheader("⚡ Chuyển đổi sang LaTeX")
@@ -1858,18 +1929,33 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                     
                     if extract_figures_single and enable_extraction and CV2_AVAILABLE and image_extractor:
                         try:
+                            # Áp dụng confidence threshold và debug mode cho single image
+                            original_threshold = image_extractor.final_confidence_threshold
+                            original_debug = image_extractor.debug_mode
+                            
+                            if 'single_confidence_threshold' in locals():
+                                image_extractor.final_confidence_threshold = single_confidence_threshold
+                            if 'single_debug' in locals():
+                                image_extractor.debug_mode = single_debug
+                                image_extractor.content_filter.text_filter.debug_mode = single_debug
+                            
                             figures, h, w = image_extractor.extract_figures_and_tables(img_bytes)
                             extracted_figures = figures
                             
+                            # Khôi phục settings gốc
+                            image_extractor.final_confidence_threshold = original_threshold
+                            image_extractor.debug_mode = original_debug
+                            image_extractor.content_filter.text_filter.debug_mode = original_debug
+                            
                             if figures:
                                 debug_img = image_extractor.create_beautiful_debug_visualization(img_bytes, figures)
-                                st.success(f"🎯 Đã tách được {len(figures)} figures!")
+                                st.success(f"🎯 Đã tách được {len(figures)} figures với confidence ≥{single_confidence_threshold if 'single_confidence_threshold' in locals() else 65}%!")
                                 
                                 # Hiển thị debug visualization
                                 with st.expander("🔍 Xem figures được tách"):
                                     display_beautiful_figures(figures, debug_img)
                             else:
-                                st.info("ℹ️ Không tìm thấy figures nào trong ảnh")
+                                st.info(f"ℹ️ Không tìm thấy figures nào có confidence ≥{single_confidence_threshold if 'single_confidence_threshold' in locals() else 65}%")
                             
                         except Exception as e:
                             st.error(f"❌ Lỗi tách figures: {str(e)}")
@@ -1908,8 +1994,9 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                             if latex_result:
                                 # Chèn figures nếu có
                                 if extract_figures_single and extracted_figures and CV2_AVAILABLE and image_extractor:
+                                    # Không hiển thị override info cho tab ảnh đơn (để gọn)
                                     latex_result = image_extractor.insert_figures_into_text_precisely(
-                                        latex_result, extracted_figures, h, w
+                                        latex_result, extracted_figures, h, w, show_override_info=False
                                     )
                                 
                                 st.success("🎉 Chuyển đổi thành công!")
@@ -1953,8 +2040,14 @@ Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\f
                                     try:
                                         extracted_figs = st.session_state.get('single_extracted_figures')
                                         
+                                        # Tạo clean latex content (không có override info)
+                                        clean_latex = st.session_state.single_latex_content
+                                        # Loại bỏ override info từ LaTeX content nếu có
+                                        import re
+                                        clean_latex = re.sub(r' \(kept: [^)]+\)', '', clean_latex)
+                                        
                                         word_buffer = EnhancedWordExporter.create_word_document(
-                                            st.session_state.single_latex_content,
+                                            clean_latex,
                                             extracted_figures=extracted_figs
                                         )
                                         
