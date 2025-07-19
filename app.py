@@ -1264,8 +1264,6 @@ Max tokens: {max_tokens}
                                 st.metric("📊 Bảng", tables)
                             with col_3:
                                 figures_count = len(all_extracted_figures) - tables
-                                # Tiếp tục từ phần bị cắt...
-
                                 st.metric("🖼️ Hình", figures_count)
                             with col_4:
                                 avg_conf = sum(f['confidence'] for f in all_extracted_figures) / len(all_extracted_figures)
