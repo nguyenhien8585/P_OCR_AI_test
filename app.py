@@ -2219,7 +2219,548 @@ class EnhancedWordExporter:
         parts = re.split(r'(\$\{[^}]+\}\$)', content)
         
         for part in parts:
-            if part.startswith('${') and part.endswith('}):
+            if part.startswith('${') and part.endswith('}
+                
+                # Chuyển đổi một số ký hiệu LaTeX cơ bản thành Unicode
+                formula_content = EnhancedWordExporter._convert_latex_to_unicode(formula_content)
+                
+                # Thêm công thức vào paragraph với font khác biệt
+                run = para.add_run(formula_content)
+                run.font.name = 'Cambria Math'  # Font phù hợp cho toán học
+                run.font.italic = True  # In nghiêng cho công thức
+                
+            elif part.strip():
+                # Đây là text thường
+                run = para.add_run(part)
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(12)
+    
+    @staticmethod
+    def _convert_latex_to_unicode(latex_content):
+        """
+        Chuyển đổi một số ký hiệu LaTeX sang Unicode
+        """
+        # Dictionary chuyển đổi LaTeX sang Unicode
+        latex_to_unicode = {
+            # Chữ Hy Lạp
+            '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
+            '\\epsilon': 'ε', '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ',
+            '\\pi': 'π', '\\sigma': 'σ', '\\phi': 'φ', '\\omega': 'ω',
+            '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ', '\\Pi': 'Π',
+            '\\Sigma': 'Σ', '\\Phi': 'Φ', '\\Omega': 'Ω',
+            
+            # Ký hiệu toán học
+            '\\infty': '∞', '\\pm': '±', '\\mp': '∓',
+            '\\times': '×', '\\div': '÷', '\\cdot': '·',
+            '\\leq': '≤', '\\geq': '≥', '\\neq': '≠',
+            '\\approx': '≈', '\\equiv': '≡', '\\sim': '∼',
+            '\\subset': '⊂', '\\supset': '⊃', '\\in': '∈',
+            '\\notin': '∉', '\\cup': '∪', '\\cap': '∩',
+            '\\sum': '∑', '\\prod': '∏', '\\int': '∫',
+            '\\partial': '∂', '\\nabla': '∇',
+            
+            # Mũi tên
+            '\\rightarrow': '→', '\\leftarrow': '←',
+            '\\leftrightarrow': '↔', '\\Rightarrow': '⇒',
+            '\\Leftarrow': '⇐', '\\Leftrightarrow': '⇔',
+            
+            # Xử lý phân số đơn giản
+            '\\frac{1}{2}': '½', '\\frac{1}{3}': '⅓', '\\frac{2}{3}': '⅔',
+            '\\frac{1}{4}': '¼', '\\frac{3}{4}': '¾', '\\frac{1}{8}': '⅛',
+            
+            # Lũy thừa đơn giản (sử dụng superscript Unicode)
+            '^2': '²', '^3': '³', '^1': '¹',
+            '^0': '⁰', '^4': '⁴', '^5': '⁵',
+            '^6': '⁶', '^7': '⁷', '^8': '⁸', '^9': '⁹',
+            
+            # Chỉ số dưới đơn giản (sử dụng subscript Unicode)
+            '_0': '₀', '_1': '₁', '_2': '₂', '_3': '₃',
+            '_4': '₄', '_5': '₅', '_6': '₆', '_7': '₇',
+            '_8': '₈', '_9': '₉',
+        }
+        
+        # Thực hiện chuyển đổi
+        result = latex_content
+        for latex_symbol, unicode_symbol in latex_to_unicode.items():
+            result = result.replace(latex_symbol, unicode_symbol)
+        
+        # Xử lý phân số phức tạp \\frac{a}{b} -> a/b
+        frac_pattern = r'\\frac\{([^}]+)\}\{([^}]+)\}'
+        result = re.sub(frac_pattern, r'(\1)/(\2)', result)
+        
+        # Xử lý căn bậc hai \\sqrt{x} -> √x
+        sqrt_pattern = r'\\sqrt\{([^}]+)\}'
+        result = re.sub(sqrt_pattern, r'√(\1)', result)
+        
+        # Xử lý lũy thừa phức tạp {x}^{y} -> x^y
+        pow_pattern = r'\{([^}]+)\}\^\{([^}]+)\}'
+        result = re.sub(pow_pattern, r'\1^(\2)', result)
+        
+        # Xử lý chỉ số dưới phức tạp {x}_{y} -> x_y
+        sub_pattern = r'\{([^}]+)\}_\{([^}]+)\}'
+        result = re.sub(sub_pattern, r'\1_(\2)', result)
+        
+        # Loại bỏ các dấu ngoặc nhọn còn lại
+        result = result.replace('{', '').replace('}', '')
+        
+        return result
+    
+    @staticmethod
+    def _insert_figure_to_word(doc, tag_line, extracted_figures):
+        """
+        Chèn hình ảnh vào Word - xử lý cả override info và Mistral boost
+        """
+        try:
+            # Extract figure name - xử lý cả trường hợp có override info và Mistral boost
+            fig_name = None
+            if 'HÌNH:' in tag_line:
+                # Lấy phần sau "HÌNH:" và trước "]"
+                hình_part = tag_line.split('HÌNH:')[1]
+                # Loại bỏ phần override info và Mistral boost nếu có
+                if '(' in hình_part:
+                    fig_name = hình_part.split('(')[0].strip()
+                else:
+                    fig_name = hình_part.split(']')[0].strip()
+            elif 'BẢNG:' in tag_line:
+                # Lấy phần sau "BẢNG:" và trước "]"
+                bảng_part = tag_line.split('BẢNG:')[1]
+                # Loại bỏ phần override info và Mistral boost nếu có
+                if '(' in bảng_part:
+                    fig_name = bảng_part.split('(')[0].strip()
+                else:
+                    fig_name = bảng_part.split(']')[0].strip()
+            
+            if not fig_name or not extracted_figures:
+                # Thêm placeholder text nếu không tìm thấy figure
+                para = doc.add_paragraph(f"[Không tìm thấy figure: {fig_name if fig_name else 'unknown'}]")
+                para.alignment = 1
+                return
+            
+            # Tìm figure matching
+            target_figure = None
+            for fig in extracted_figures:
+                if fig['name'] == fig_name:
+                    target_figure = fig
+                    break
+            
+            if target_figure:
+                # Decode và chèn ảnh
+                try:
+                    img_data = base64.b64decode(target_figure['base64'])
+                    img_pil = Image.open(io.BytesIO(img_data))
+                    
+                    # Chuyển đổi format nếu cần
+                    if img_pil.mode in ('RGBA', 'LA', 'P'):
+                        img_pil = img_pil.convert('RGB')
+                    
+                    # Tạo file tạm
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                        img_pil.save(tmp_file.name, 'PNG')
+                        
+                        try:
+                            # Tính toán kích thước ảnh phù hợp
+                            page_width = doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin
+                            img_width = min(page_width * 0.8, Inches(6))
+                        except:
+                            img_width = Inches(5)
+                        
+                        # Chèn ảnh vào document
+                        para = doc.add_paragraph()
+                        para.alignment = 1  # Center alignment
+                        run = para.add_run()
+                        run.add_picture(tmp_file.name, width=img_width)
+                        
+                        # Thêm caption nếu có override info hoặc Mistral boost
+                        caption_parts = []
+                        if target_figure.get('override_reason'):
+                            caption_parts.append(f"kept: {target_figure['override_reason']}")
+                        if target_figure.get('mistral_boost'):
+                            caption_parts.append(f"🧠 Mistral: {target_figure['mistral_boost']}")
+                        
+                        if caption_parts:
+                            caption_para = doc.add_paragraph()
+                            caption_para.alignment = 1
+                            caption_run = caption_para.add_run(f"({', '.join(caption_parts)})")
+                            caption_run.font.size = Pt(10)
+                            caption_run.font.italic = True
+                        
+                        # Xóa file tạm
+                        os.unlink(tmp_file.name)
+                    
+                except Exception as img_error:
+                    # Nếu lỗi xử lý ảnh, thêm placeholder
+                    para = doc.add_paragraph(f"[Lỗi hiển thị {target_figure['name']}: {str(img_error)}]")
+                    para.alignment = 1
+            else:
+                # Không tìm thấy figure matching
+                para = doc.add_paragraph(f"[Không tìm thấy figure: {fig_name}]")
+                para.alignment = 1
+                    
+        except Exception as e:
+            # Lỗi parsing tag
+            para = doc.add_paragraph(f"[Lỗi xử lý figure tag: {str(e)}]")
+            para.alignment = 1
+
+def display_beautiful_figures(figures, debug_img=None):
+    """
+    Hiển thị figures đẹp với error handling
+    """
+    try:
+        if not figures:
+            st.warning("⚠️ Không có figures nào")
+            return
+        
+        if debug_img:
+            st.image(debug_img, caption="Debug visualization", use_column_width=True)
+        
+        # Hiển thị figures trong grid
+        cols_per_row = 3
+        for i in range(0, len(figures), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j in range(cols_per_row):
+                if i + j < len(figures):
+                    fig = figures[i + j]
+                    with cols[j]:
+                        try:
+                            img_data = base64.b64decode(fig['base64'])
+                            img_pil = Image.open(io.BytesIO(img_data))
+                            
+                            st.image(img_pil, use_column_width=True)
+                            
+                            confidence_color = "🟢" if fig['confidence'] > 70 else "🟡" if fig['confidence'] > 50 else "🔴"
+                            type_icon = "📊" if fig['is_table'] else "🖼️"
+                            
+                            override_text = ""
+                            if fig.get('override_reason'):
+                                override_text = f"<br><small>✅ Kept: {fig['override_reason']}</small>"
+                            
+                            mistral_text = ""
+                            if fig.get('mistral_boost'):
+                                mistral_text = f"<br><small>🧠 Mistral: {fig['mistral_boost']}</small>"
+                            
+                            st.markdown(f"""
+                            <div style="background: #f0f0f0; padding: 0.5rem; border-radius: 5px; margin: 5px 0;">
+                                <strong>{type_icon} {fig['name']}</strong><br>
+                                {confidence_color} {fig['confidence']:.1f}% | {fig['method']}{override_text}{mistral_text}
+                            </div>
+                            """, unsafe_allow_html=True)
+                        except Exception as e:
+                            st.error(f"Lỗi hiển thị figure: {str(e)}")
+    except Exception as e:
+        st.error(f"Lỗi hiển thị figures: {str(e)}")
+
+def validate_api_key(api_key: str) -> bool:
+    if not api_key or len(api_key) < 20:
+        return False
+    return re.match(r'^[A-Za-z0-9_-]+, api_key) is not None
+
+def validate_mistral_api_key(api_key: str) -> bool:
+    if not api_key or len(api_key) < 20:
+        return False
+    # Mistral API keys usually start with specific patterns
+    return True  # Simple validation for now
+
+def format_file_size(size_bytes: int) -> str:
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024
+        i += 1
+    
+    return f"{size_bytes:.1f} {size_names[i]}"
+
+def clean_session_state():
+    """Clean up session state to prevent memory issues"""
+    keys_to_clean = [
+        'pdf_latex_content', 'pdf_images', 'pdf_extracted_figures',
+        'single_latex_content', 'single_extracted_figures',
+        'phone_latex_content', 'phone_extracted_figures', 'phone_processed_image'
+    ]
+    for key in keys_to_clean:
+        if key in st.session_state:
+            del st.session_state[key]
+    gc.collect()
+
+def main():
+    try:
+        st.markdown('<h1 class="main-header">📝 PDF/LaTeX Converter - Enhanced with Mistral OCR & Phone Processing</h1>', unsafe_allow_html=True)
+        
+        # Hero section
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #FF6B35 0%, #FF8E53 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
+            <h2 style="margin: 0;">⚖️ BALANCED TEXT FILTER + 🧠 MISTRAL OCR + 📱 PHONE PROCESSING + 📄 WORD EXPORT</h2>
+            <p style="margin: 1rem 0; font-size: 1.1rem;">✅ Mistral Pixtral-12B vision analysis • ✅ Phone image processing • ✅ Word export with images • ✅ Advanced filtering</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Sidebar
+        with st.sidebar:
+            st.header("⚙️ Cài đặt")
+            
+            # Clean session button
+            if st.button("🧹 Clean Memory", help="Xóa cache để giải phóng bộ nhớ"):
+                clean_session_state()
+                st.success("✅ Memory cleaned!")
+            
+            # API keys
+            api_key = st.text_input("Gemini API Key", type="password")
+            
+            if api_key:
+                if validate_api_key(api_key):
+                    st.success("✅ Gemini API key hợp lệ")
+                else:
+                    st.error("❌ Gemini API key không hợp lệ")
+            
+            st.markdown("---")
+            
+            # Mistral OCR Service Settings
+            st.markdown("### 🧠 Mistral OCR Service")
+            enable_mistral_ocr = st.checkbox("Bật Mistral OCR để đếm figures", value=True)
+            
+            if enable_mistral_ocr:
+                mistral_api_key = st.text_input(
+                    "Mistral API Key", 
+                    type="password",
+                    help="API key cho Mistral AI service"
+                )
+                
+                if mistral_api_key:
+                    if validate_mistral_api_key(mistral_api_key):
+                        st.success("✅ Mistral API key đã nhập")
+                    else:
+                        st.error("❌ Mistral API key quá ngắn")
+                
+                st.markdown("""
+                <div class="mistral-badge">
+                🧠 <strong>Mistral OCR Features:</strong><br>
+                • Pixtral-12B vision model analysis<br>
+                • Intelligent figure/table counting<br>
+                • Visual complexity assessment<br>
+                • Mathematical content detection<br>
+                • Content type classification<br>
+                • Advanced layout analysis<br>
+                • Fallback to traditional method nếu lỗi
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                mistral_api_key = None
+            
+            st.markdown("---")
+            
+            # Cài đặt tách ảnh
+            if CV2_AVAILABLE:
+                st.markdown("### ⚖️ Balanced Text Filter")
+                enable_extraction = st.checkbox("Bật tách ảnh Balanced", value=True)
+                
+                if enable_extraction:
+                    debug_mode = st.checkbox("Debug mode", value=False)
+                    
+                    with st.expander("🔧 Cài đặt Advanced"):
+                        confidence_threshold = st.slider("Final Confidence Threshold (%)", 50, 95, 65, 5)
+                        max_figures = st.slider("Max figures per page", 5, 50, 25, 5)
+                        
+                        st.markdown("**Memory Management:**")
+                        max_image_size = st.slider("Max image dimension", 1000, 4000, 2000, 500)
+                        st.markdown(f"<small>Images larger than {max_image_size}x{max_image_size} will be resized</small>", unsafe_allow_html=True)
+                        
+                        st.markdown("**Word Export:**")
+                        show_override_info = st.checkbox("Hiển thị override info trong Word", value=False)
+                        st.markdown("<small>ℹ️ Nếu tắt, chỉ hiển thị [🖼️ HÌNH: figure-1.jpeg] thôi</small>", unsafe_allow_html=True)
+            else:
+                enable_extraction = False
+                debug_mode = False
+                st.error("❌ OpenCV không khả dụng!")
+        
+        if not api_key:
+            st.warning("⚠️ Vui lòng nhập Gemini API Key!")
+            return
+        
+        if not validate_api_key(api_key):
+            st.error("❌ Gemini API key không hợp lệ!")
+            return
+        
+        # Khởi tạo với error handling
+        try:
+            gemini_api = GeminiAPI(api_key)
+            
+            # Initialize Mistral OCR Service
+            mistral_ocr_service = None
+            if enable_mistral_ocr and mistral_api_key:
+                try:
+                    mistral_ocr_service = MistralOCRService(mistral_api_key)
+                    st.markdown("""
+                    <div class="mistral-badge">
+                        🧠 Mistral OCR Service initialized with Pixtral-12B
+                    </div>
+                    """, unsafe_allow_html=True)
+                except Exception as e:
+                    st.warning(f"⚠️ Could not initialize Mistral OCR service: {str(e)}")
+            elif enable_mistral_ocr:
+                st.warning("⚠️ Mistral OCR enabled but missing API Key")
+            
+            if enable_extraction and CV2_AVAILABLE:
+                image_extractor = SuperEnhancedImageExtractor(mistral_ocr_service)
+                
+                # Apply settings
+                if 'confidence_threshold' in locals():
+                    image_extractor.final_confidence_threshold = confidence_threshold
+                if 'max_figures' in locals():
+                    image_extractor.max_figures = max_figures
+                if 'debug_mode' in locals():
+                    image_extractor.debug_mode = debug_mode
+                    image_extractor.content_filter.text_filter.debug_mode = debug_mode
+                
+                # Enable/disable OCR counting
+                if mistral_ocr_service:
+                    image_extractor.content_filter.enable_ocr_counting = True
+                else:
+                    image_extractor.content_filter.enable_ocr_counting = False
+            else:
+                image_extractor = None
+                
+        except Exception as e:
+            st.error(f"❌ Lỗi khởi tạo: {str(e)}")
+            return
+        
+        # Main content với tabs
+        tab1, tab2, tab3 = st.tabs(["📄 PDF sang LaTeX", "🖼️ Ảnh sang LaTeX", "📱 Ảnh điện thoại"])
+        
+        with tab1:
+            st.header("📄 Chuyển đổi PDF sang LaTeX")
+            
+            uploaded_pdf = st.file_uploader("Chọn file PDF", type=['pdf'])
+            
+            if uploaded_pdf:
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    st.subheader("📋 Preview PDF")
+                    
+                    # File info
+                    file_size = format_file_size(uploaded_pdf.size)
+                    st.info(f"📁 {uploaded_pdf.name} | 📏 {file_size}")
+                    
+                    # Check file size
+                    if uploaded_pdf.size > 50 * 1024 * 1024:  # 50MB
+                        st.warning("⚠️ File lớn (>50MB). Có thể xử lý chậm.")
+                    
+                    # Page limit option
+                    max_pages = st.number_input("Giới hạn số trang (0 = không giới hạn)", 
+                                              min_value=0, max_value=100, value=0)
+                    
+                    with st.spinner("🔄 Đang xử lý PDF..."):
+                        try:
+                            pdf_images = PDFProcessor.extract_images_and_text(
+                                uploaded_pdf, 
+                                max_pages if max_pages > 0 else None
+                            )
+                            st.success(f"✅ Đã trích xuất {len(pdf_images)} trang")
+                            
+                            # Preview
+                            for i, (img, page_num) in enumerate(pdf_images[:2]):
+                                st.markdown(f"**📄 Trang {page_num}:**")
+                                st.image(img, use_column_width=True)
+                            
+                            if len(pdf_images) > 2:
+                                st.info(f"... và {len(pdf_images) - 2} trang khác")
+                        
+                        except Exception as e:
+                            st.error(f"❌ Lỗi xử lý PDF: {str(e)}")
+                            pdf_images = []
+                
+                with col2:
+                    st.subheader("⚡ Chuyển đổi sang LaTeX")
+                    
+                    if st.button("🚀 Bắt đầu chuyển đổi PDF", type="primary"):
+                        if pdf_images:
+                            all_latex_content = []
+                            all_extracted_figures = []
+                            all_debug_images = []
+                            
+                            # Continuous numbering across pages
+                            continuous_img_idx = 0
+                            continuous_table_idx = 0
+                            
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            for i, (img, page_num) in enumerate(pdf_images):
+                                try:
+                                    status_text.text(f"Đang xử lý trang {page_num}/{len(pdf_images)}...")
+                                    
+                                    img_buffer = io.BytesIO()
+                                    img.save(img_buffer, format='PNG')
+                                    img_bytes = img_buffer.getvalue()
+                                    
+                                    # Check image size
+                                    if len(img_bytes) > 20 * 1024 * 1024:  # 20MB
+                                        st.warning(f"⚠️ Trang {page_num} quá lớn, resize...")
+                                        img_resized = img.copy()
+                                        img_resized.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
+                                        img_buffer = io.BytesIO()
+                                        img_resized.save(img_buffer, format='PNG')
+                                        img_bytes = img_buffer.getvalue()
+                                    
+                                    # Tách ảnh với Balanced Text Filter và continuous numbering
+                                    extracted_figures = []
+                                    debug_img = None
+                                    
+                                    if enable_extraction and CV2_AVAILABLE and image_extractor:
+                                        try:
+                                            figures, h, w, continuous_img_idx, continuous_table_idx = image_extractor.extract_figures_and_tables(
+                                                img_bytes, continuous_img_idx, continuous_table_idx
+                                            )
+                                            extracted_figures = figures
+                                            all_extracted_figures.extend(figures)
+                                            
+                                            if figures:
+                                                debug_img = image_extractor.create_beautiful_debug_visualization(img_bytes, figures)
+                                                all_debug_images.append((debug_img, page_num, figures))
+                                            
+                                        except Exception as e:
+                                            st.error(f"❌ Lỗi tách ảnh trang {page_num}: {str(e)}")
+                                    
+                                    # Prompt
+                                    prompt_text = """
+Chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chính xác.
+
+🎯 YÊU CẦU ĐỊNH DẠNG:
+
+1. **Câu hỏi trắc nghiệm:**
+```
+Câu X: [nội dung câu hỏi đầy đủ]
+A) [đáp án A hoàn chỉnh]
+B) [đáp án B hoàn chỉnh]
+C) [đáp án C hoàn chỉnh]  
+D) [đáp án D hoàn chỉnh]
+```
+
+2. **Công thức toán học - LUÔN dùng ${...}$:**
+- ${x^2 + y^2 = z^2}$, ${\\frac{a+b}{c-d}}$
+- ${\\int_{0}^{1} x^2 dx}$, ${\\lim_{x \\to 0} \\frac{\\sin x}{x}}$
+- Ví dụ: Trong hình hộp ${ABCD.A'B'C'D'}$ có tất cả các cạnh đều bằng nhau...
+
+3. **📊 Bảng dữ liệu - Format linh hoạt:**
+```
+Option 1 (Multi-line):
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45)
+Số ngày | 6 | 6 | 4 | 1 | 1
+
+Option 2 (Single-line):
+Thời gian (phút) | [20; 25) | [25; 30) | [30; 35) | [35; 40) | [40; 45) Số ngày | 6 | 6 | 4 | 1 | 1
+```
+
+⚠️ TUYỆT ĐỐI dùng ${...}$ cho MỌI công thức, biến số, ký hiệu toán học!
+Ví dụ: Điểm ${A}$, ${B}$, ${C}$, công thức ${x^2 + 1}$, tỉ số ${\\frac{a}{b}}$
+
+📊 TUYỆT ĐỐI dùng | để phân cách các cột trong bảng!
+Ví dụ: Tên | Tuổi | Điểm
+
+🔹 CHÚ Ý: Chỉ dùng ký tự $ khi có cặp ${...}$, không dùng $ đơn lẻ!
+""" ):
                 # Đây là công thức LaTeX
                 # Loại bỏ ${ và }$ để lấy nội dung bên trong
                 formula_content = part[2:-2]
