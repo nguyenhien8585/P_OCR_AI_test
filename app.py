@@ -1480,15 +1480,263 @@ Model: {model_choice}
                             st.metric("📊 Bảng", tables)
                         with col_3:
                             figures_count = len(all_extracted_figures) - tables
-                            st.metric("🖼️ Hình", figures_count)
-                        with col_4:
-                            avg_conf = sum(f['confidence'] for f in all_extracted_figures) / len(all_extracted_figures)
-                            st.metric("🎯 Avg Confidence", f"{avg_conf:.1f}%")
+                            # Tiếp tục từ phần bị cắt...
+
+                                st.metric("🖼️ Hình", figures_count)
+                            with col_4:
+                                avg_conf = sum(f['confidence'] for f in all_extracted_figures) / len(all_extracted_figures)
+                                st.metric("🎯 Avg Confidence", f"{avg_conf:.1f}%")
+                            
+                            # Hiển thị figures đẹp
+                            for debug_img, page_num, figures in all_debug_images:
+                                with st.expander(f"📄 Trang {page_num} - {len(figures)} figures"):
+                                    display_beautiful_figures(figures, debug_img)
                         
-                        # Hiển thị figures đẹp
+                        # Lưu vào session
+                        st.session_state.pdf_latex_content = combined_latex
+                        st.session_state.pdf_images = [img for img, _ in pdf_images]
+                        st.session_state.pdf_extracted_figures = all_extracted_figures if enable_extraction else None
+                
+                # Download buttons
+                if 'pdf_latex_content' in st.session_state:
+                    st.markdown("---")
+                    st.markdown("### 📥 Tải xuống")
+                    
+                    col_x, col_y = st.columns(2)
+                    with col_x:
+                        st.download_button(
+                            label="📝 Tải LaTeX (.tex)",
+                            data=st.session_state.pdf_latex_content,
+                            file_name=uploaded_pdf.name.replace('.pdf', '_mistral.tex'),
+                            mime="text/plain",
+                            type="primary"
+                        )
+                    
+                    with col_y:
+                        if st.button("📄 Tạo Word", key="create_word"):
+                            with st.spinner("🔄 Đang tạo Word với LaTeX..."):
+                                try:
+                                    # Tạo Word content (simplified)
+                                    word_content = st.session_state.pdf_latex_content
+                                    
+                                    st.download_button(
+                                        label="📄 Tải Word (.docx)",
+                                        data=word_content.encode('utf-8'),
+                                        file_name=uploaded_pdf.name.replace('.pdf', '_mistral.docx'),
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                    )
+                                    
+                                    st.success("✅ Word tạo thành công!")
+                                except Exception as e:
+                                    st.error(f"❌ Lỗi tạo Word: {str(e)}")
+    
+    # Tab Image
+    with tab2:
+        st.header("🖼️ Chuyển đổi Ảnh sang LaTeX")
+        st.markdown('<div class="mistral-badge">🤖 Powered by Mistral AI</div>', unsafe_allow_html=True)
+        
+        uploaded_images = st.file_uploader(
+            "Chọn ảnh (có thể chọn nhiều)",
+            type=['png', 'jpg', 'jpeg', 'bmp', 'tiff'],
+            accept_multiple_files=True
+        )
+        
+        if uploaded_images:
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.subheader("📋 Preview Ảnh")
+                
+                for i, uploaded_image in enumerate(uploaded_images[:3]):  # Show first 3
+                    st.markdown(f"**🖼️ Ảnh {i+1}: {uploaded_image.name}**")
+                    img = Image.open(uploaded_image)
+                    st.image(img, use_column_width=True)
+                
+                if len(uploaded_images) > 3:
+                    st.info(f"... và {len(uploaded_images) - 3} ảnh khác")
+            
+            with col2:
+                st.subheader("⚡ Chuyển đổi sang LaTeX")
+                
+                if st.button("🚀 Bắt đầu chuyển đổi Ảnh", type="primary", key="convert_images"):
+                    st.markdown('<div class="processing-container">', unsafe_allow_html=True)
+                    
+                    all_latex_content = []
+                    all_extracted_figures = []
+                    all_debug_images = []
+                    
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    for i, uploaded_image in enumerate(uploaded_images):
+                        status_text.markdown(f"🔄 **Đang xử lý ảnh {i+1}/{len(uploaded_images)}: {uploaded_image.name}**")
+                        
+                        # Read image bytes
+                        img_bytes = uploaded_image.read()
+                        uploaded_image.seek(0)  # Reset file pointer
+                        
+                        # Tách ảnh SIÊU CẢI TIẾN
+                        extracted_figures = []
+                        debug_img = None
+                        
+                        if enable_extraction and CV2_AVAILABLE:
+                            try:
+                                with st.spinner(f"🔍 Đang tách ảnh {uploaded_image.name}..."):
+                                    figures, h, w = image_extractor.extract_figures_and_tables(img_bytes)
+                                    extracted_figures = figures
+                                    all_extracted_figures.extend(figures)
+                                    
+                                    if show_debug and figures:
+                                        debug_img = image_extractor.create_beautiful_debug_visualization(img_bytes, figures)
+                                        all_debug_images.append((debug_img, uploaded_image.name, figures))
+                                    
+                                    # Hiển thị kết quả tách ảnh
+                                    if figures:
+                                        st.markdown(f'<div class="status-success">🎯 {uploaded_image.name}: Tách được {len(figures)} figures</div>', unsafe_allow_html=True)
+                                        
+                                        if detailed_info:
+                                            for fig in figures:
+                                                method_icon = {"edge": "🔍", "contour": "📐", "grid": "📊", "blob": "🔵"}
+                                                conf_color = "🟢" if fig['confidence'] > 70 else "🟡" if fig['confidence'] > 40 else "🔴"
+                                                st.markdown(f"   {method_icon.get(fig['method'], '⚙️')} {conf_color} **{fig['name']}**: {fig['confidence']:.1f}% ({fig['method']})")
+                                    else:
+                                        st.markdown(f'<div class="status-warning">⚠️ {uploaded_image.name}: Không tách được figures</div>', unsafe_allow_html=True)
+                                
+                            except Exception as e:
+                                st.error(f"❌ Lỗi tách ảnh {uploaded_image.name}: {str(e)}")
+                        
+                        # Prompt cho ảnh đơn lẻ
+                        prompt_text = f"""
+Bạn là một chuyên gia OCR và LaTeX. Hãy chuyển đổi TOÀN BỘ nội dung trong ảnh thành văn bản với format LaTeX chuẩn.
+
+🎯 YÊU CẦU ĐỊNH DẠNG:
+
+1. **Câu hỏi trắc nghiệm:**
+```
+Câu X: [nội dung câu hỏi đầy đủ]
+A) [đáp án A hoàn chỉnh]
+B) [đáp án B hoàn chỉnh]  
+C) [đáp án C hoàn chỉnh]
+D) [đáp án D hoàn chỉnh]
+```
+
+2. **Câu hỏi đúng sai:**
+```
+Câu X: [nội dung câu hỏi]
+a) [khẳng định a đầy đủ]
+b) [khẳng định b đầy đủ]
+c) [khẳng định c đầy đủ]
+d) [khẳng định d đầy đủ]
+```
+
+3. **Công thức toán học - LUÔN dùng ${{...}}$:**
+- Hình học: ${{ABCD.A'B'C'D'}}$, ${{\\overrightarrow{{AB}}}}$
+- Phương trình: ${{x^2 + y^2 = z^2}}$, ${{\\frac{{a+b}}{{c-d}}}}$
+- Tích phân: ${{\\int_{{0}}^{{1}} x^2 dx}}$, ${{\\lim_{{x \\to 0}} \\frac{{\\sin x}}{{x}}}}$
+- Ma trận: ${{\\begin{{pmatrix}} a & b \\\\ c & d \\end{{pmatrix}}}}$
+
+⚠️ TUYỆT ĐỐI:
+- LUÔN dùng ${{...}}$ cho MỌI công thức, ký hiệu toán học
+- KHÔNG dùng ```latex```, $...$, \\(...\\), \\[...\\]
+- Sử dụng A), B), C), D) cho trắc nghiệm
+- Sử dụng a), b), c), d) cho đúng sai
+- Bao gồm TẤT CẢ văn bản từ ảnh
+- Giữ nguyên thứ tự và cấu trúc
+- Đọc kỹ tất cả text trong ảnh, kể cả text nhỏ
+
+Ảnh: {uploaded_image.name}
+Model: {model_choice}
+"""
+                        
+                        # Gọi Mistral API
+                        try:
+                            with st.spinner(f"🤖 Đang chuyển đổi LaTeX {uploaded_image.name} với Mistral AI..."):
+                                latex_result = mistral_api.convert_to_latex(img_bytes, uploaded_image.type, prompt_text)
+                                
+                                if latex_result:
+                                    # Chèn figures vào đúng vị trí với filtering
+                                    if enable_extraction and extracted_figures and CV2_AVAILABLE:
+                                        latex_result = image_extractor.insert_figures_into_text_precisely(
+                                            latex_result, extracted_figures, h, w, confidence_filter_threshold
+                                        )
+                                    
+                                    all_latex_content.append(f"<!-- 🖼️ {uploaded_image.name} - Processed by {model_choice} -->\n{latex_result}\n")
+                                    st.success(f"✅ Hoàn thành {uploaded_image.name} với Mistral AI")
+                                else:
+                                    st.warning(f"⚠️ Không thể xử lý {uploaded_image.name}")
+                                    
+                        except Exception as e:
+                            st.error(f"❌ Lỗi Mistral API {uploaded_image.name}: {str(e)}")
+                            if "rate limit" in str(e).lower():
+                                st.info("💡 Thử giảm tốc độ xử lý hoặc upgrade plan")
+                        
+                        progress_bar.progress((i + 1) / len(uploaded_images))
+                    
+                    status_text.markdown("🎉 **Hoàn thành chuyển đổi tất cả ảnh với Mistral AI!**")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Hiển thị kết quả
+                    combined_latex = "\n".join(all_latex_content)
+                    
+                    st.markdown("### 📝 Kết quả LaTeX")
+                    st.markdown('<div class="mistral-badge">🤖 Generated by Mistral AI</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="latex-output">', unsafe_allow_html=True)
+                    st.code(combined_latex, language="latex")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Thống kê
+                    if enable_extraction and CV2_AVAILABLE and all_extracted_figures:
+                        st.markdown("### 📊 Thống kê tách ảnh")
+                        
+                        # Áp dụng filter cho statistics
+                        filtered_stats_figures = apply_figure_filters(
+                            all_extracted_figures, confidence_filter_threshold, 
+                            show_tables, show_figures, min_area_filter, max_area_filter, allowed_methods
+                        )
+                        
+                        col_1, col_2, col_3, col_4 = st.columns(4)
+                        with col_1:
+                            st.metric("🔍 Tổng figures", len(all_extracted_figures))
+                        with col_2:
+                            tables = sum(1 for f in filtered_stats_figures if f['is_table'])
+                            st.metric("📊 Bảng (filtered)", tables)
+                        with col_3:
+                            figures_count = len(filtered_stats_figures) - tables
+                            st.metric("🖼️ Hình (filtered)", figures_count)
+                        with col_4:
+                            if filtered_stats_figures:
+                                avg_conf = sum(f['confidence'] for f in filtered_stats_figures) / len(filtered_stats_figures)
+                                st.metric("🎯 Avg Confidence", f"{avg_conf:.1f}%")
+                            else:
+                                st.metric("🎯 Avg Confidence", "N/A")
+                        
+                        # High quality figures summary
+                        if enable_confidence_filter:
+                            high_quality = [f for f in all_extracted_figures if f['confidence'] >= confidence_filter_threshold]
+                            if high_quality:
+                                st.markdown(f"""
+                                <div style='background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); 
+                                     color: #155724; padding: 1rem; border-radius: 8px; margin: 1rem 0;'>
+                                    <strong>🔥 Figures chất lượng cao:</strong> {len(high_quality)}/{len(all_extracted_figures)} 
+                                    figures có confidence ≥ {confidence_filter_threshold}%
+                                </div>
+                                """, unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"""
+                                <div style='background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); 
+                                     color: #856404; padding: 1rem; border-radius: 8px; margin: 1rem 0;'>
+                                    <strong>⚠️ Không có figures chất lượng cao:</strong> 
+                                    Không có figures nào đạt confidence ≥ {confidence_filter_threshold}%
+                                </div>
+                                """, unsafe_allow_html=True)
+                        
+                        # Hiển thị figures đẹp với filter
                         for debug_img, img_name, figures in all_debug_images:
                             with st.expander(f"🖼️ {img_name} - {len(figures)} figures"):
-                                display_beautiful_figures(figures, debug_img)
+                                display_beautiful_figures_with_filter(
+                                    figures, debug_img, confidence_filter_threshold,
+                                    show_tables, show_figures, min_area_filter, max_area_filter, allowed_methods
+                                )
                     
                     # Lưu vào session
                     st.session_state.images_latex_content = combined_latex
